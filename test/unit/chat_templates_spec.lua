@@ -59,6 +59,14 @@ do
 	assert(cleaned == "hello ")
 end
 
+-- trim_trailing_stop_prefix (reply can end with prefix of stop e.g. "<|" when we stop on token id)
+do
+	local q = t.get("qwen")
+	assert(t.trim_trailing_stop_prefix("hello <|", q) == "hello ")
+	assert(t.trim_trailing_stop_prefix("hello <|im_end|", q) == "hello ")
+	assert(t.trim_trailing_stop_prefix("hello", q) == "hello")
+end
+
 -- clean_response
 do
 	local q = t.get("qwen")

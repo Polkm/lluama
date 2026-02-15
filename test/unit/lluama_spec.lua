@@ -15,5 +15,8 @@ assert(lluama.set_log_callback, "set_log_callback exists")
 if lluama.Sampler then
 	assert(type(lluama.Sampler) == "function", "Sampler is constructor")
 end
+if lluama.ChatSession then
+	assert(type(lluama.ChatSession) == "function", "ChatSession is constructor")
+end
 
 print("lluama_spec: all passed")

@@ -37,5 +37,6 @@ lluama.Backend = require("src.backend")(llama, ggml)
 lluama.Context = require("src.context")(llama)
 lluama.Model = require("src.model")(llama, lluama)
 lluama.Sampler = require("src.sampler")(llama)
+lluama.ChatSession = require("src.chat_session")(lluama)
 
 return lluama

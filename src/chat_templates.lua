@@ -168,6 +168,26 @@ function templates.check_stop(text, template)
 	return false, text
 end
 
+-- Remove from the end of text any suffix that is a prefix of a stop sequence (e.g. trailing "<|" before "<|im_end|>").
+function templates.trim_trailing_stop_prefix(text, template)
+	local out = text
+	local changed = true
+	while changed do
+		changed = false
+		for _, seq in ipairs(template.stop_sequences) do
+			for k = #seq - 1, 1, -1 do
+				if #out >= k and out:sub(-k) == seq:sub(1, k) then
+					out = out:sub(1, #out - k)
+					changed = true
+					break
+				end
+			end
+			if changed then break end
+		end
+	end
+	return out
+end
+
 -- Get template by name (case-insensitive)
 function templates.get(name)
 	name = name:lower()

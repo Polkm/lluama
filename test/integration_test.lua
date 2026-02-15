@@ -7,7 +7,6 @@
 -- Important: set_sampler(ctx, sampler) must be called before decode_tokens so the backend associates logits with the sequence.
 
 package.path = "./?.lua;" .. package.path
-local ffi = require("ffi")
 local lluama = require("src.lluama")
 
 -- Parse args: [model_path] [--loop N] [--only NAME]
@@ -33,13 +32,6 @@ local llama = lluama.llama
 local t = lluama.chat_templates.get("qwen")
 assert(t, "qwen template required")
 
-local function token_to_piece(vocab, token)
-	local buf = ffi.new("char[64]")
-	local n = llama.llama_token_to_piece(vocab, token, buf, 64, 0, false)
-	if n <= 0 then return "" end
-	return ffi.string(buf, n)
-end
-
 local tests = {}
 
 -- 1. Backend init + model load + context (no decode)
@@ -51,7 +43,7 @@ function tests.init_and_load()
 	assert(ctx.ctx ~= nil and model.model ~= nil)
 end
 
--- 2. Tokenize only (add_bos true and false)
+-- 2. Tokenize only (add_bos true and false) and token_to_piece
 function tests.tokenize_only()
 	local backend = lluama.Backend()
 	backend:init()
@@ -59,6 +51,8 @@ function tests.tokenize_only()
 	local tokens_bos = model:tokenize("Hi", true)
 	local tokens_no_bos = model:tokenize("Hi", false)
 	assert(#tokens_bos >= 1 and #tokens_no_bos >= 1)
+	local piece = model:token_to_piece(tokens_bos[1])
+	assert(type(piece) == "string", "model:token_to_piece returns string")
 end
 
 -- 3. Single-token decode (like test_bindings)
@@ -140,15 +134,19 @@ function tests.sampler_loop()
 	local n_past = #tokens
 	local logits_idx = #tokens - 1
 	local max_steps = 20
+	local reply = ""
 	for step = 1, max_steps do
 		local next_token = sampler:sample(ctx.ctx, logits_idx)
 		if next_token == eos then break end
+		reply = reply .. model:token_to_piece(next_token)
 		sampler:accept(next_token)
 		err = ctx:decode_one(next_token, n_past)
 		assert(err == 0, "decode_one failed at step " .. tostring(step) .. " n_past=" .. tostring(n_past))
 		n_past = n_past + 1
 		logits_idx = 0
 	end
+	assert(type(reply) == "string", "token_to_piece coverage")
+	assert(not reply:match("%<|%s*$"), "reply should not end with <|")
 end
 
 -- 7. Two turns on same context (two prefills + short sample each)
@@ -176,15 +174,18 @@ function tests.two_turns()
 		for i = 1, #tokens do sampler:accept(tokens[i]) end
 		n_past = n_past + #tokens
 		local logits_idx = #tokens - 1
+		local turn_reply = ""
 		for _ = 1, 5 do
 			local next_token = sampler:sample(ctx.ctx, logits_idx)
 			if next_token == eos then break end
+			turn_reply = turn_reply .. model:token_to_piece(next_token)
 			sampler:accept(next_token)
 			err = ctx:decode_one(next_token, n_past)
 			assert(err == 0, "turn " .. turn .. " decode_one failed")
 			n_past = n_past + 1
 			logits_idx = 0
 		end
+		assert(type(turn_reply) == "string", "token_to_piece in two_turns")
 	end
 end
 
@@ -213,9 +214,11 @@ function tests.chat_style_turns()
 	for i = 1, #tokens1 do sampler:accept(tokens1[i]) end
 	local n_past = #tokens1
 	local logits_idx = #tokens1 - 1
+	local reply1 = ""
 	for _ = 1, 10 do
 		local next_token = sampler:sample(ctx.ctx, logits_idx)
 		if next_token == eos then break end
+		reply1 = reply1 .. model:token_to_piece(next_token)
 		sampler:accept(next_token)
 		err = ctx:decode_one(next_token, n_past)
 		assert(err == 0, "turn 1 decode_one failed")
@@ -232,18 +235,59 @@ function tests.chat_style_turns()
 	for i = 1, #tokens2 do sampler:accept(tokens2[i]) end
 	n_past = n_past + #tokens2
 	logits_idx = #tokens2 - 1
+	local reply2 = ""
 	for _ = 1, 5 do
 		local next_token = sampler:sample(ctx.ctx, logits_idx)
 		if next_token == eos then break end
+		reply2 = reply2 .. model:token_to_piece(next_token)
 		sampler:accept(next_token)
 		err = ctx:decode_one(next_token, n_past)
 		assert(err == 0, "turn 2 decode_one failed")
 		n_past = n_past + 1
 		logits_idx = 0
 	end
+	assert(not reply2:match("%<|%s*$"), "chat_style turn 2 reply should not end with <|")
 end
 
--- 9. Model accessors
+-- 9. ChatSession: one prompt + generate (same behavior as chat.lua one turn)
+function tests.chat_session_one_turn()
+	local backend = lluama.Backend()
+	backend:init()
+	local session = lluama.ChatSession(backend, model_path, {
+		template = "qwen",
+		system_prompt = "You are a helpful assistant. Answer concisely.",
+		temp = 0.5,
+		seed = 99,
+	})
+	local err = session:prompt("Say hello in one word.")
+	assert(err == 0, "ChatSession:prompt failed")
+	local reply = session:generate(20, nil)  -- no stream, return full reply
+	assert(type(reply) == "string")
+	assert(not reply:match("%<|%s*$"), "reply should not end with <|")
+end
+
+-- 10. ChatSession: two turns (prompt+generate, prompt+generate) for full session coverage
+function tests.chat_session_two_turns()
+	local backend = lluama.Backend()
+	backend:init()
+	local session = lluama.ChatSession(backend, model_path, {
+		template = "qwen",
+		system_prompt = "You are helpful.",
+		temp = 0.5,
+		seed = 42,
+	})
+	local err = session:prompt("What is 1+1? Reply with one number.")
+	assert(err == 0)
+	local reply1 = session:generate(15, nil)
+	assert(type(reply1) == "string")
+	err = session:prompt("Now say that number in words.")
+	assert(err == 0)
+	local reply2 = session:generate(15, nil)
+	assert(type(reply2) == "string")
+	assert(not reply2:match("%<|%s*$"), "second reply should not end with <|")
+end
+
+-- 11. Model accessors
 function tests.model_accessors()
 	local backend = lluama.Backend()
 	backend:init()
@@ -265,6 +309,8 @@ local test_order = {
 	"sampler_loop",
 	"two_turns",
 	"chat_style_turns",
+	"chat_session_one_turn",
+	"chat_session_two_turns",
 	"model_accessors",
 }
 
