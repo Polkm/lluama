@@ -1,0 +1,19 @@
+-- Unit tests for lluama module and class constructors (no model file required)
+
+package.path = "./?.lua;" .. package.path
+local lluama = require("src.lluama")
+
+assert(lluama.llama, "lluama.llama")
+assert(lluama.ggml, "lluama.ggml")
+assert(lluama.chat_templates, "lluama.chat_templates")
+assert(type(lluama.Backend) == "function", "Backend is constructor")
+assert(type(lluama.Model) == "function", "Model is constructor")
+assert(type(lluama.Context) == "function", "Context is constructor")
+assert(lluama.chat_templates.get("qwen"), "chat_templates.get works")
+assert(lluama.set_log_callback, "set_log_callback exists")
+-- Sampler if present
+if lluama.Sampler then
+	assert(type(lluama.Sampler) == "function", "Sampler is constructor")
+end
+
+print("lluama_spec: all passed")
