@@ -24,6 +24,12 @@ return function(llama, lluama)
 				self._tokenize_buf_cap = nil
 				self._piece_buf = nil
 				self._desc_buf = nil
+				self._detokenize_buf = nil
+				self._detokenize_buf_cap = nil
+				self._detokenize_token_buf = nil
+				self._detokenize_token_cap = nil
+				self._meta_key_buf = nil
+				self._meta_val_buf = nil
 			end
 		end,
 		__index = {},
@@ -111,6 +117,173 @@ return function(llama, lluama)
 	function Model_mt.n_params(self)
 		assert_model(self)
 		return llama.llama_model_n_params(self.model)
+	end
+
+	function Model_mt.size(self)
+		assert_model(self)
+		return llama.llama_model_size(self.model)
+	end
+
+	function Model_mt.save_to_file(self, path)
+		assert_model(self)
+		llama.llama_model_save_to_file(self.model, path)
+	end
+
+	-- Architecture / query
+	function Model_mt.n_ctx_train(self)
+		assert_model(self)
+		return llama.llama_model_n_ctx_train(self.model)
+	end
+	function Model_mt.n_embd(self)
+		assert_model(self)
+		return llama.llama_model_n_embd(self.model)
+	end
+	function Model_mt.n_embd_inp(self)
+		assert_model(self)
+		return llama.llama_model_n_embd_inp(self.model)
+	end
+	function Model_mt.n_embd_out(self)
+		assert_model(self)
+		return llama.llama_model_n_embd_out(self.model)
+	end
+	function Model_mt.n_layer(self)
+		assert_model(self)
+		return llama.llama_model_n_layer(self.model)
+	end
+	function Model_mt.n_head(self)
+		assert_model(self)
+		return llama.llama_model_n_head(self.model)
+	end
+	function Model_mt.n_head_kv(self)
+		assert_model(self)
+		return llama.llama_model_n_head_kv(self.model)
+	end
+	function Model_mt.n_swa(self)
+		assert_model(self)
+		return llama.llama_model_n_swa(self.model)
+	end
+	function Model_mt.rope_type(self)
+		assert_model(self)
+		return llama.llama_model_rope_type(self.model)
+	end
+	function Model_mt.rope_freq_scale_train(self)
+		assert_model(self)
+		return llama.llama_model_rope_freq_scale_train(self.model)
+	end
+	function Model_mt.has_encoder(self)
+		assert_model(self)
+		return llama.llama_model_has_encoder(self.model)
+	end
+	function Model_mt.has_decoder(self)
+		assert_model(self)
+		return llama.llama_model_has_decoder(self.model)
+	end
+	function Model_mt.decoder_start_token(self)
+		assert_model(self)
+		return llama.llama_model_decoder_start_token(self.model)
+	end
+	function Model_mt.is_recurrent(self)
+		assert_model(self)
+		return llama.llama_model_is_recurrent(self.model)
+	end
+	function Model_mt.is_hybrid(self)
+		assert_model(self)
+		return llama.llama_model_is_hybrid(self.model)
+	end
+	function Model_mt.is_diffusion(self)
+		assert_model(self)
+		return llama.llama_model_is_diffusion(self.model)
+	end
+
+	-- Classification (encoder models)
+	function Model_mt.n_cls_out(self)
+		assert_model(self)
+		return llama.llama_model_n_cls_out(self.model)
+	end
+	function Model_mt.cls_label(self, i)
+		assert_model(self)
+		local p = llama.llama_model_cls_label(self.model, i)
+		return p ~= nil and ffi.string(p) or nil
+	end
+
+	-- Model meta (KV from file)
+	function Model_mt.meta_count(self)
+		assert_model(self)
+		return llama.llama_model_meta_count(self.model)
+	end
+	function Model_mt.meta_key_by_index(self, i)
+		assert_model(self)
+		if not self._meta_key_buf then
+			self._meta_key_buf = ffi.new("char[?]", 128)
+		end
+		local n = llama.llama_model_meta_key_by_index(self.model, i, self._meta_key_buf, 128)
+		return n > 0 and ffi.string(self._meta_key_buf, n) or nil
+	end
+	function Model_mt.meta_val_str_by_index(self, i)
+		assert_model(self)
+		if not self._meta_val_buf then
+			self._meta_val_buf = ffi.new("char[?]", 256)
+		end
+		local n = llama.llama_model_meta_val_str_by_index(self.model, i, self._meta_val_buf, 256)
+		return n > 0 and ffi.string(self._meta_val_buf, n) or nil
+	end
+
+	-- Built-in chat template from model file (name e.g. "chatml")
+	function Model_mt.chat_template(self, name)
+		assert_model(self)
+		local p = name and llama.llama_model_chat_template(self.model, name) or nil
+		return p ~= nil and ffi.string(p) or nil
+	end
+
+	-- Vocab special token ids (convenience)
+	function Model_mt.bos(self) return llama.llama_vocab_bos(self:vocab()) end
+	function Model_mt.eos(self) return llama.llama_vocab_eos(self:vocab()) end
+	function Model_mt.eot(self) return llama.llama_vocab_eot(self:vocab()) end
+	function Model_mt.sep(self) return llama.llama_vocab_sep(self:vocab()) end
+	function Model_mt.nl(self) return llama.llama_vocab_nl(self:vocab()) end
+	function Model_mt.pad(self) return llama.llama_vocab_pad(self:vocab()) end
+	function Model_mt.mask(self) return llama.llama_vocab_mask(self:vocab()) end
+	function Model_mt.vocab_n_tokens(self) return llama.llama_vocab_n_tokens(self:vocab()) end
+	function Model_mt.vocab_type(self) return llama.llama_vocab_type(self:vocab()) end
+	function Model_mt.vocab_get_text(self, token)
+		local p = llama.llama_vocab_get_text(self:vocab(), token)
+		return p ~= nil and ffi.string(p) or nil
+	end
+	function Model_mt.vocab_get_add_bos(self) return llama.llama_vocab_get_add_bos(self:vocab()) end
+	function Model_mt.vocab_get_add_eos(self) return llama.llama_vocab_get_add_eos(self:vocab()) end
+
+	-- Detokenize: token ids -> string. remove_special, unparse_special (default false).
+	function Model_mt.detokenize(self, token_ids, remove_special, unparse_special)
+		assert_model(self)
+		if remove_special == nil then remove_special = false end
+		if unparse_special == nil then unparse_special = false end
+		local n = #token_ids
+		if n == 0 then return "" end
+		local vocab = self:vocab()
+		local cap = 4096
+		if not self._detokenize_buf or self._detokenize_buf_cap < cap then
+			self._detokenize_buf_cap = cap
+			self._detokenize_buf = ffi.new("char[?]", cap)
+		end
+		local buf = self._detokenize_buf
+		if not self._detokenize_token_buf or self._detokenize_token_cap < n then
+			self._detokenize_token_cap = math.max(n, 256)
+			self._detokenize_token_buf = ffi.new("int32_t[?]", self._detokenize_token_cap)
+		end
+		local token_buf = self._detokenize_token_buf
+		for i = 0, n - 1 do
+			token_buf[i] = token_ids[i + 1]
+		end
+		local len = llama.llama_detokenize(vocab, token_buf, n, buf, cap, remove_special, unparse_special)
+		if len <= 0 then return "" end
+		if len >= cap then
+			self._detokenize_buf_cap = len + 1
+			self._detokenize_buf = ffi.new("char[?]", self._detokenize_buf_cap)
+			buf = self._detokenize_buf
+			len = llama.llama_detokenize(vocab, token_buf, n, buf, len + 1, remove_special, unparse_special)
+			if len <= 0 then return "" end
+		end
+		return ffi.string(buf, len)
 	end
 
 	function Model_mt.desc(self)

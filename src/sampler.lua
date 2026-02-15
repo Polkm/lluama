@@ -27,7 +27,17 @@ return function(llama)
 		llama.llama_sampler_reset(self.chain)
 	end
 
-	-- opts: temp (number), seed (number), top_p (number, optional), min_keep (number, optional for top_p), greedy (bool)
+	function Sampler_mt.chain_n(self)
+		return llama.llama_sampler_chain_n(self.chain)
+	end
+	function Sampler_mt.chain_get(self, i)
+		return llama.llama_sampler_chain_get(self.chain, i)
+	end
+	function Sampler_mt.get_seed(self)
+		return llama.llama_sampler_get_seed(self.chain)
+	end
+
+	-- opts: temp, seed, top_p, top_k, min_p, typical, min_keep, greedy, penalty_last_n, penalty_repeat, penalty_freq, penalty_present
 	return function(opts)
 		opts = opts or {}
 		local temp = opts.temp or 0.7
@@ -43,6 +53,23 @@ return function(llama)
 		if opts.top_p and opts.top_p < 1.0 then
 			local min_keep = opts.min_keep or 1
 			llama.llama_sampler_chain_add(chain, llama.llama_sampler_init_top_p(opts.top_p, min_keep))
+		end
+		if opts.top_k and opts.top_k > 0 then
+			llama.llama_sampler_chain_add(chain, llama.llama_sampler_init_top_k(opts.top_k))
+		end
+		if opts.min_p and opts.min_p > 0 then
+			llama.llama_sampler_chain_add(chain, llama.llama_sampler_init_min_p(opts.min_p, opts.min_keep or 1))
+		end
+		if opts.typical and opts.typical > 0 then
+			llama.llama_sampler_chain_add(chain, llama.llama_sampler_init_typical(opts.typical, opts.min_keep or 1))
+		end
+		if opts.penalty_last_n or opts.penalty_repeat or opts.penalty_freq or opts.penalty_present then
+			llama.llama_sampler_chain_add(chain, llama.llama_sampler_init_penalties(
+				opts.penalty_last_n or 64,
+				opts.penalty_repeat or 1.1,
+				opts.penalty_freq or 0.0,
+				opts.penalty_present or 0.0
+			))
 		end
 		return setmetatable({
 			chain = chain,

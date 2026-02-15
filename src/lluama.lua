@@ -32,6 +32,22 @@ end
 -- Silent by default
 lluama.set_log_callback(nil)
 
+-- Low-level API parity: time, system info, capabilities
+function lluama.time_us()
+	return llama.llama_time_us()
+end
+function lluama.print_system_info()
+	local p = llama.llama_print_system_info()
+	return p ~= nil and ffi.string(p) or nil
+end
+function lluama.supports_mmap() return llama.llama_supports_mmap() end
+function lluama.supports_mlock() return llama.llama_supports_mlock() end
+function lluama.supports_gpu_offload() return llama.llama_supports_gpu_offload() end
+function lluama.supports_rpc() return llama.llama_supports_rpc() end
+function lluama.max_devices() return llama.llama_max_devices() end
+function lluama.max_parallel_sequences() return llama.llama_max_parallel_sequences() end
+function lluama.max_tensor_buft_overrides() return llama.llama_max_tensor_buft_overrides() end
+
 -- Load class constructors (Context before Model so Model can use lluama.Context)
 lluama.Backend = require("src.backend")(llama, ggml)
 lluama.Context = require("src.context")(llama)

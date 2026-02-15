@@ -287,7 +287,7 @@ function tests.chat_session_two_turns()
 	assert(not reply2:match("%<|%s*$"), "second reply should not end with <|")
 end
 
--- 11. Model accessors
+-- 11. Model accessors (incl. low-level parity)
 function tests.model_accessors()
 	local backend = lluama.Backend()
 	backend:init()
@@ -298,6 +298,22 @@ function tests.model_accessors()
 	assert(n ~= nil and (tonumber(n) or n) > 0)
 	local d = model:desc()
 	assert(d ~= nil and type(tostring(d)) == "string")
+	-- Parity: size, arch, vocab tokens, detokenize
+	local sz = model:size()
+	assert(sz ~= nil and (tonumber(sz) or sz) >= 0)
+	assert(model:n_embd() ~= nil and model:n_layer() ~= nil)
+	local bos, eos = model:bos(), model:eos()
+	assert(type(bos) == "number" and type(eos) == "number")
+	local tokens = model:tokenize("Hi", false)
+	local text = model:detokenize(tokens, false, false)
+	assert(type(text) == "string")
+	-- Context query parity
+	local ctx = model:context({ n_ctx = 256, n_batch = 128 })
+	assert(ctx:n_ctx() == 256 and ctx:n_batch() == 128)
+	assert(ctx:get_model() ~= nil)
+	-- Module-level parity
+	assert(lluama.time_us() ~= nil)
+	assert(type(lluama.print_system_info()) == "string" or lluama.print_system_info() == nil)
 end
 
 local test_order = {

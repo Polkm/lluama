@@ -17,6 +17,11 @@ return function(llama, ggml)
 		llama.llama_backend_init()
 	end
 
+	-- numa: ggml_numa_strategy enum (e.g. 0 = disabled). Call before init() if needed.
+	function Backend_mt.numa_init(self, numa)
+		llama.llama_numa_init(numa or 0)
+	end
+
 	return function()
 		return setmetatable({}, Backend_mt)
 	end
