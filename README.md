@@ -20,6 +20,8 @@ The test loads the model path defined in the script, runs backend init, tokenize
 
 **CLI chat:** `luajit test/chat.lua [model_path]` — minimal back-and-forth chat (default model path as in test). Empty line to quit.
 
+**CLI chat (JSON):** `luajit test/chat_json.lua [model_path]` — same as above with `grammar = "json"` so output is constrained to valid JSON.
+
 **Unit tests** (no model or DLL required for most): `luajit test/unit/run.lua` — runs chat_templates, lluama, and Sampler specs.
 
 **Integration tests** (Qwen model required): `luajit test/integration_test.lua [model_path] [--loop N]` — load model, tokenize, decode, sampler loop, two turns. Use `--loop 10` to run repeatedly and catch flakes. Call `ctx:set_sampler(sampler)` before `ctx:decode_tokens(...)` so the backend associates logits with the sequence.
@@ -54,11 +56,14 @@ local session = lluama.ChatSession(backend, "path/to/model.gguf", {
   template = "qwen",           -- or "chatml", "llama3", etc.
   system_prompt = "You are a helpful assistant.",
   temp = 0.7,
+  grammar = "json",            -- optional: force output to be valid JSON
 })
 session:prompt("Hello!")
 session:generate(256, function(piece) io.write(piece) io.flush() end)  -- stream
 -- Or: local reply = session:generate(256)  -- no callback = return full reply
 ```
+
+**JSON output:** Pass `grammar = "json"` in `ChatSession` opts or when creating a `Sampler` (then pass the model as second argument: `lluama.Sampler({ temp = 0.7, grammar = "json" }, model)`). Custom GBNF strings are also supported via `grammar = "<gbnf string>"` and optional `grammar_root = "root"`.
 
 **Lower-level:** `Model`, `Context`, `Sampler` for custom loops.
 
@@ -66,6 +71,7 @@ session:generate(256, function(piece) io.write(piece) io.flush() end)  -- stream
 local model = lluama.Model(backend, "path/to/model.gguf")
 local ctx = model:context({ n_ctx = 512, n_batch = 256 })
 local sampler = lluama.Sampler({ temp = 0.7, seed = 12345 })
+-- Or with JSON grammar: lluama.Sampler({ temp = 0.7, grammar = "json" }, model)
 ctx:set_sampler(sampler)
 local token_ids = model:tokenize("Hello", false)
 local err = ctx:decode_tokens(token_ids, 0)  -- second arg: pos_start (for multi-turn)

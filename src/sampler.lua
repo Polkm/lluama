@@ -1,6 +1,8 @@
--- Sampler: wraps llama_sampler_chain (temp + dist, optional top_p). __gc frees chain.
+-- Sampler: wraps llama_sampler_chain (temp + dist, optional top_p, optional grammar). __gc frees chain.
+-- When opts.grammar is set, pass the model as second argument so the sampler can use the vocab.
 
 return function(llama)
+	local grammars = require("src.grammars")
 	local Sampler_mt = {
 		__gc = function(self)
 			if self.chain ~= nil then
@@ -37,13 +39,37 @@ return function(llama)
 		return llama.llama_sampler_get_seed(self.chain)
 	end
 
-	-- opts: temp, seed, top_p, top_k, min_p, typical, min_keep, greedy, penalty_last_n, penalty_repeat, penalty_freq, penalty_present
-	return function(opts)
+	-- opts: temp, seed, top_p, top_k, min_p, typical, min_keep, greedy, penalty_last_n, penalty_repeat, penalty_freq, penalty_present, grammar, grammar_root
+	-- When opts.grammar is set, model (second arg) must be provided for vocab. grammar can be "json" or a GBNF string.
+	return function(opts, model)
 		opts = opts or {}
 		local temp = opts.temp or 0.7
 		local seed = opts.seed or 12345
 		local chain_params = llama.llama_sampler_chain_default_params()
 		local chain = llama.llama_sampler_chain_init(chain_params)
+		-- Grammar first so it constrains which tokens are valid before temp/dist.
+		local grammar_str = opts.grammar
+		if grammar_str then
+			if not model then
+				error("lluama.Sampler: opts.grammar requires model as second argument")
+			end
+			local vocab = model:vocab()
+			local gstr, root
+			if grammar_str == "json" then
+				gstr = grammars.json
+				root = opts.grammar_root or grammars.json_root
+			elseif type(grammar_str) == "string" and grammar_str:find("::=") then
+				gstr = grammar_str
+				root = opts.grammar_root or "root"
+			else
+				error("lluama.Sampler: opts.grammar must be \"json\" or a GBNF string containing \"::=\"")
+			end
+			local grammar_sampler = llama.llama_sampler_init_grammar(vocab, gstr, root)
+			if grammar_sampler == nil then
+				error("lluama.Sampler: failed to init grammar sampler")
+			end
+			llama.llama_sampler_chain_add(chain, grammar_sampler)
+		end
 		if opts.greedy then
 			llama.llama_sampler_chain_add(chain, llama.llama_sampler_init_greedy())
 		else

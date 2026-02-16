@@ -5,6 +5,7 @@
 local ffi = require("ffi")
 local bindings = require("src.bindings")
 local chat_templates = require("src.chat_templates")
+local grammars = require("src.grammars")
 
 local llama = bindings.llama
 local ggml = bindings.ggml
@@ -12,6 +13,7 @@ local lluama = {
 	llama = llama,
 	ggml = ggml,
 	chat_templates = chat_templates,
+	grammars = grammars,
 }
 
 -- Logging: silent by default. Use set_log_callback to hook in.

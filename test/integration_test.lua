@@ -287,7 +287,50 @@ function tests.chat_session_two_turns()
 	assert(not reply2:match("%<|%s*$"), "second reply should not end with <|")
 end
 
--- 11. Model accessors (incl. low-level parity)
+-- 11. Grammar basics: minimal grammar (root ::= "a"). Decode "a", accept prompt token(s), then sample.
+--     Passes when the grammar sees valid input first (accept prompt tokens). On some llama.cpp builds,
+--     accept() throws if the grammar has never received any token (e.g. JSON flow with no prompt accept).
+function tests.grammar_basics()
+	local backend = lluama.Backend()
+	backend:init()
+	local model = lluama.Model(backend, model_path)
+	local ctx = model:context({ n_ctx = 256, n_batch = 128 })
+	local eos = llama.llama_vocab_eos(model:vocab())
+
+	-- Minimal grammar: only the single character "a" is valid.
+	local gbnf = 'root ::= "a"\n'
+	local sampler = lluama.Sampler({
+		grammar = gbnf,
+		grammar_root = "root",
+		greedy = true,
+	}, model)
+	ctx:set_sampler(sampler)
+
+	-- Prompt is exactly "a" so it's valid per the grammar. Decode and accept into sampler.
+	local tokens = model:tokenize("a", false)
+	assert(#tokens >= 1, "tokenize 'a'")
+	local err = ctx:decode_tokens(tokens, 0)
+	assert(err == 0, "decode_tokens: " .. tostring(err))
+	for i = 1, #tokens do
+		sampler:accept(tokens[i])
+	end
+
+	local n_past = #tokens
+	local logits_idx = n_past - 1
+
+	-- Sample next token. After "a", root is complete so only EOS or similar may be allowed.
+	local next_token = sampler:sample(ctx.ctx, logits_idx)
+	if next_token == eos then
+		-- Expected: grammar is satisfied, EOS is fine.
+		return
+	end
+	-- If we get another token, accept it (may throw on some builds).
+	sampler:accept(next_token)
+	err = ctx:decode_one(next_token, n_past)
+	assert(err == 0, "decode_one: " .. tostring(err))
+end
+
+-- 12. Model accessors (incl. low-level parity)
 function tests.model_accessors()
 	local backend = lluama.Backend()
 	backend:init()
@@ -327,6 +370,7 @@ local test_order = {
 	"chat_style_turns",
 	"chat_session_one_turn",
 	"chat_session_two_turns",
+	"grammar_basics",
 	"model_accessors",
 }
 

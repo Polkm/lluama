@@ -31,12 +31,21 @@ return function(lluama)
 			local t = self._template
 			prompt = t.user_start .. user_message .. t.user_end .. t.assistant_start
 		end
+		-- When using a grammar, ensure prompt ends with newline so grammars that use
+		-- prefix ::= .* "\n" before the constrained part (e.g. "yes"|"no") see a complete prefix.
+		if self._grammar and prompt:sub(-1) ~= "\n" then
+			prompt = prompt .. "\n"
+		end
 		local tokens = self.model:tokenize(prompt, false)
 		if #tokens == 0 then return 0 end
 		local err = self.ctx:decode_tokens(tokens, self._n_past)
 		if err ~= 0 then return err end
-		for i = 1, #tokens do
-			self.sampler:accept(tokens[i])
+		-- When using a grammar, do not accept prompt tokens (they are not valid JSON). The grammar
+		-- is reset at the start of generate() and only accepts tokens we just sampled.
+		if not self._grammar then
+			for i = 1, #tokens do
+				self.sampler:accept(tokens[i])
+			end
 		end
 		self._n_past = self._n_past + #tokens
 		self._last_n_tokens = #tokens
@@ -52,6 +61,9 @@ return function(lluama)
 		local logits_idx = n_tokens - 1
 		local reply = ""
 		local printed_len = 0
+		if self._grammar then
+			self.sampler:reset()
+		end
 
 		for _ = 1, max_tokens do
 			local next_token = self.sampler:sample(ctx, logits_idx)
@@ -104,10 +116,15 @@ return function(lluama)
 			n_ctx = opts.n_ctx or 2048,
 			n_batch = opts.n_batch or 512,
 		})
-		local sampler = lluama.Sampler({
+		local sampler_opts = {
 			temp = opts.temp or 0.7,
 			seed = opts.seed or 12345,
-		})
+		}
+		if opts.grammar then
+			sampler_opts.grammar = opts.grammar
+			sampler_opts.grammar_root = opts.grammar_root
+		end
+		local sampler = lluama.Sampler(sampler_opts, opts.grammar and model or nil)
 		ctx:set_sampler(sampler)
 
 		local stop_token_ids = {}
@@ -131,6 +148,7 @@ return function(lluama)
 			_last_n_tokens = 0,
 			_stop_token_ids = stop_token_ids,
 			_eos_id = eos_id,
+			_grammar = opts.grammar and true or nil,
 		}, ChatSession_mt)
 	end
 end

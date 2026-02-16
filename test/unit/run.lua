@@ -19,7 +19,7 @@ local function run_file(path)
 	return false, name, tostring(err)
 end
 
-local spec_files = { "chat_templates_spec.lua", "lluama_spec.lua", "sampler_spec.lua" }
+local spec_files = { "chat_templates_spec.lua", "lluama_spec.lua", "sampler_spec.lua", "chat_session_spec.lua" }
 local passed, failed = 0, 0
 local failures = {}
 
