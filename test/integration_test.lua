@@ -377,6 +377,31 @@ function tests.model_accessors()
 	assert(type(lluama.print_system_info()) == "string" or lluama.print_system_info() == nil)
 end
 
+-- 13. Save/load state blob (mirrors llama.cpp examples/save-load-state): prefill, save full state to file,
+--     load into a new context and verify size. Full replay (sample after load) uses state_save_blob/state_load_blob
+--     and same n_past; first sample should use logits index -1 (last) then 0 for subsequent steps.
+function tests.save_load_state()
+	local backend = lluama.Backend()
+	backend:init()
+	local model = lluama.Model(backend, model_path)
+	local ctx1 = model:context({ n_ctx = 512, n_batch = 256 })
+	local prompt = "The quick brown fox"
+	local tokens = model:tokenize(prompt, true)
+	assert(#tokens >= 1)
+	local err = ctx1:decode_tokens(tokens)
+	assert(err == 0, "decode_tokens failed")
+
+	local blob_path = "dump_state.bin"
+	local n_saved = ctx1:state_save_blob(blob_path)
+	assert(n_saved and n_saved > 0, "state_save_blob failed: " .. tostring(n_saved))
+
+	local ctx2 = model:context({ n_ctx = 512, n_batch = 256 })
+	local n_loaded = ctx2:state_load_blob(blob_path)
+	assert(n_loaded and n_loaded == n_saved, "state_load_blob failed: " .. tostring(n_loaded))
+
+	os.remove(blob_path)
+end
+
 local test_order = {
 	"init_and_load",
 	"tokenize_only",
@@ -390,6 +415,7 @@ local test_order = {
 	"chat_session_two_turns",
 	"grammar_basics",
 	"model_accessors",
+	"save_load_state",
 }
 
 local total_iters = 0

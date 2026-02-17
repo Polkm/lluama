@@ -250,6 +250,38 @@ return function(llama)
 		assert_ctx(self)
 		return llama.llama_state_set_data(self.ctx, src_buf, size or ffi.sizeof(src_buf))
 	end
+	-- Save full context state (rng, logits, embedding, kv_cache) to a binary file.
+	-- Mirrors save-load-state example: state_get_size -> state_get_data -> write file.
+	-- Returns bytes_written, or nil, errmsg on failure.
+	function Context_mt.state_save_blob(self, path)
+		assert_ctx(self)
+		local buf, n = self:state_get_data(nil)
+		if n == 0 then return 0 end
+		local f = io.open(path, "wb")
+		if not f then return nil, "state_save_blob: failed to open " .. tostring(path) end
+		local ok, err
+		ok, err = pcall(function()
+			f:write(ffi.string(buf, n))
+		end)
+		f:close()
+		if not ok then return nil, err or "write failed" end
+		return n
+	end
+	-- Load full context state from a binary file (as saved by state_save_blob).
+	-- Returns bytes_read, or nil, errmsg on failure.
+	function Context_mt.state_load_blob(self, path)
+		assert_ctx(self)
+		local f = io.open(path, "rb")
+		if not f then return nil, "state_load_blob: failed to open " .. tostring(path) end
+		local data = f:read("*a")
+		f:close()
+		if not data or #data == 0 then return nil, "state_load_blob: empty file" end
+		local buf = ffi.new("uint8_t[?]", #data)
+		ffi.copy(buf, data, #data)
+		local nset = llama.llama_state_set_data(self.ctx, buf, #data)
+		if nset ~= #data then return nil, "state_load_blob: set_data length mismatch" end
+		return nset
+	end
 	-- token_ids: Lua array of tokens to save with the KV state.
 	function Context_mt.state_save_file(self, path_session, token_ids)
 		assert_ctx(self)
@@ -324,6 +356,25 @@ return function(llama)
 	function Context_mt.state_seq_set_data_ext(self, src_buf, size, dest_seq_id, flags)
 		assert_ctx(self)
 		return llama.llama_state_seq_set_data_ext(self.ctx, src_buf, size or ffi.sizeof(src_buf), dest_seq_id or LLAMA_SEQ_ID, flags or 0)
+	end
+	-- Copy one sequence's KV state to another (e.g. save seq 0, clear KV, restore into seq 1).
+	-- If clear_before then KV cache is cleared before restoring into dest_seq_id.
+	-- Returns bytes copied, or nil, errmsg on failure.
+	function Context_mt.state_seq_copy(self, src_seq_id, dest_seq_id, clear_before)
+		assert_ctx(self)
+		src_seq_id = src_seq_id or LLAMA_SEQ_ID
+		dest_seq_id = dest_seq_id or LLAMA_SEQ_ID
+		local sz = self:state_seq_get_size(src_seq_id)
+		if sz == 0 then return 0 end
+		local buf = ffi.new("uint8_t[?]", sz)
+		local nget = self:state_seq_get_data(buf, sz, src_seq_id)
+		if nget ~= sz then return nil, "state_seq_copy: get_data length mismatch" end
+		if clear_before then
+			self:memory_clear(true)
+		end
+		local nset = self:state_seq_set_data(buf, sz, dest_seq_id)
+		if nset ~= sz then return nil, "state_seq_copy: set_data length mismatch" end
+		return nset
 	end
 
 	-- Sampled token/probs/candidates (when using a sampler)
