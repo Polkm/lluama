@@ -1,9 +1,50 @@
--- ChatSession: high-level chat loop. Handles template, decode positions, sampler, and stop logic.
+-- ChatSession: high-level chat loop. Uses native llama_chat_apply_template only.
+-- See: https://github.com/ggml-org/llama.cpp/wiki/Templates-supported-by-llama_chat_apply_template
 -- Use :prompt(user_message) then :generate(max_tokens, stream_cb) for each turn.
 
 return function(lluama)
 	local llama = lluama.llama
-	local templates = lluama.chat_templates
+	local chat_native = lluama.chat_native
+
+	-- Stop-string helpers (vocab-derived stop_sequences). Longest-first order for clean_response.
+	local function clean_response(text, stop_sequences)
+		for _, seq in ipairs(stop_sequences) do
+			local pos = text:find(seq, 1, true)
+			if pos then
+				text = text:sub(1, pos - 1)
+			end
+		end
+		return text:match("^%s*(.-)%s*$") or text
+	end
+
+	local function check_stop(text, stop_sequences)
+		for _, seq in ipairs(stop_sequences) do
+			local pos = text:find(seq, 1, true)
+			if pos then
+				return true, text:sub(1, pos - 1)
+			end
+		end
+		return false, text
+	end
+
+	local function trim_trailing_stop_prefix(text, stop_sequences)
+		local out = text
+		local changed = true
+		while changed do
+			changed = false
+			for _, seq in ipairs(stop_sequences) do
+				for k = #seq - 1, 1, -1 do
+					if #out >= k and out:sub(-k) == seq:sub(1, k) then
+						out = out:sub(1, #out - k)
+						changed = true
+						break
+					end
+				end
+				if changed then break end
+			end
+		end
+		return out
+	end
 
 	local function should_skip_print(piece, reply, stop_sequences)
 		for _, seq in ipairs(stop_sequences) do
@@ -19,20 +60,23 @@ return function(lluama)
 	ChatSession_mt.__index = ChatSession_mt
 
 	function ChatSession_mt:prompt(user_message)
-		local prompt
+		local messages
 		if self._first_turn then
-			prompt = templates.format_conversation(
-				{ { role = "user", content = user_message } },
-				self._system_prompt,
-				self._template
-			)
 			self._first_turn = false
+			messages = {}
+			if self._system_prompt and #self._system_prompt > 0 then
+				messages[1] = { role = "system", content = self._system_prompt }
+			end
+			messages[#messages + 1] = { role = "user", content = user_message }
 		else
-			local t = self._template
-			prompt = t.user_start .. user_message .. t.user_end .. t.assistant_start
+			messages = { { role = "user", content = user_message } }
+		end
+		local prompt = chat_native.chat_apply_template(self._native_template_str, messages, true)
+		if not prompt then
+			error("ChatSession: native chat_apply_template failed")
 		end
 		-- When using a grammar, ensure prompt ends with newline so grammars that use
-		-- prefix ::= .* "\n" before the constrained part (e.g. "yes"|"no") see a complete prefix.
+		-- prefix ::= .* "\n" see a complete prefix before the constrained part.
 		if self._grammar and prompt:sub(-1) ~= "\n" then
 			prompt = prompt .. "\n"
 		end
@@ -40,12 +84,13 @@ return function(lluama)
 		if #tokens == 0 then return 0 end
 		local err = self.ctx:decode_tokens(tokens, self._n_past)
 		if err ~= 0 then return err end
-		-- When using a grammar, do not accept prompt tokens (they are not valid JSON). The grammar
-		-- is reset at the start of generate() and only accepts tokens we just sampled.
-		if not self._grammar then
-			for i = 1, #tokens do
-				self.sampler:accept(tokens[i])
-			end
+		-- When using a grammar (e.g. JSON with prefix), reset then accept the prompt so the grammar
+		-- sees the prefix; generate() will then only allow the constrained part (e.g. JSON object).
+		if self._grammar then
+			self.sampler:reset()
+		end
+		for i = 1, #tokens do
+			self.sampler:accept(tokens[i])
 		end
 		self._n_past = self._n_past + #tokens
 		self._last_n_tokens = #tokens
@@ -56,21 +101,19 @@ return function(lluama)
 		max_tokens = max_tokens or 1024
 		local ctx = self.ctx.ctx
 		local eos_id = self._eos_id
-		local t = self._template
+		local stop_sequences = self._stop_sequences
 		local n_tokens = self._last_n_tokens
 		local logits_idx = n_tokens - 1
 		local reply = ""
 		local printed_len = 0
-		if self._grammar then
-			self.sampler:reset()
-		end
+		-- Grammar state was set in prompt() (we accepted the prefix); do not reset here.
 
 		for _ = 1, max_tokens do
 			local next_token = self.sampler:sample(ctx, logits_idx)
 			if next_token == eos_id then break end
 			if self._stop_token_ids[next_token] then
-				local cleaned = templates.clean_response(reply, t)
-				cleaned = templates.trim_trailing_stop_prefix(cleaned, t)
+				local cleaned = clean_response(reply, stop_sequences)
+				cleaned = trim_trailing_stop_prefix(cleaned, stop_sequences)
 				if stream_cb and #cleaned > printed_len then
 					stream_cb(cleaned:sub(printed_len + 1))
 				end
@@ -80,9 +123,9 @@ return function(lluama)
 
 			local piece = self.model:token_to_piece(next_token)
 			reply = reply .. piece
-			local should_stop, cleaned = templates.check_stop(reply, t)
+			local should_stop, cleaned = check_stop(reply, stop_sequences)
 			if should_stop then
-				cleaned = templates.clean_response(cleaned, t)
+				cleaned = clean_response(cleaned, stop_sequences)
 				if stream_cb and #cleaned > printed_len then
 					stream_cb(cleaned:sub(printed_len + 1))
 				end
@@ -90,7 +133,7 @@ return function(lluama)
 				break
 			end
 
-			if stream_cb and not should_skip_print(piece, reply, t.stop_sequences) then
+			if stream_cb and not should_skip_print(piece, reply, stop_sequences) then
 				stream_cb(piece)
 				printed_len = #reply
 			end
@@ -106,12 +149,22 @@ return function(lluama)
 
 	return function(backend, model_path, opts)
 		opts = opts or {}
-		local template_name = opts.template or "qwen"
-		local t = templates.get(template_name)
-		if not t then
-			error("ChatSession: template '" .. template_name .. "' not found")
-		end
+		local template_name = opts.template or "chatml"
 		local model = lluama.Model(backend, model_path)
+		local native_tmpl = opts.template_string
+		if not native_tmpl or #native_tmpl == 0 then
+			native_tmpl = model:chat_template(template_name)
+				or model:chat_template("default")
+				or model:chat_template("tokenizer")
+				or model:chat_template("tokenizer.chat_template")
+			if not native_tmpl or #native_tmpl == 0 then
+				native_tmpl = model:meta_val_str("tokenizer.chat_template")
+			end
+		end
+		if not native_tmpl or #native_tmpl == 0 then
+			error("ChatSession: model has no chat template. Use a GGUF with tokenizer.chat_template, or pass opts.template_string with the template.")
+		end
+		local stop_sequences = model:stop_strings_from_vocab()
 		local ctx = model:context({
 			n_ctx = opts.n_ctx or 2048,
 			n_batch = opts.n_batch or 512,
@@ -128,7 +181,7 @@ return function(lluama)
 		ctx:set_sampler(sampler)
 
 		local stop_token_ids = {}
-		for _, seq in ipairs(t.stop_sequences) do
+		for _, seq in ipairs(stop_sequences) do
 			local ids = model:tokenize(seq, false)
 			if #ids > 0 then stop_token_ids[ids[#ids]] = true end
 		end
@@ -141,7 +194,7 @@ return function(lluama)
 			model = model,
 			ctx = ctx,
 			sampler = sampler,
-			_template = t,
+			_stop_sequences = stop_sequences,
 			_system_prompt = opts.system_prompt or "",
 			_n_past = 0,
 			_first_turn = true,
@@ -149,6 +202,7 @@ return function(lluama)
 			_stop_token_ids = stop_token_ids,
 			_eos_id = eos_id,
 			_grammar = opts.grammar and true or nil,
+			_native_template_str = native_tmpl,
 		}, ChatSession_mt)
 	end
 end

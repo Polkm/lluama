@@ -5,12 +5,10 @@ local lluama = require("src.lluama")
 
 assert(lluama.llama, "lluama.llama")
 assert(lluama.ggml, "lluama.ggml")
-assert(lluama.chat_templates, "lluama.chat_templates")
 assert(lluama.grammars and lluama.grammars.json and lluama.grammars.json_root == "root", "lluama.grammars.json")
 assert(type(lluama.Backend) == "function", "Backend is constructor")
 assert(type(lluama.Model) == "function", "Model is constructor")
 assert(type(lluama.Context) == "function", "Context is constructor")
-assert(lluama.chat_templates.get("qwen"), "chat_templates.get works")
 assert(lluama.set_log_callback, "set_log_callback exists")
 -- Sampler if present
 if lluama.Sampler then

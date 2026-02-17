@@ -1,9 +1,6 @@
--- CLI chat with JSON grammar: forces model output to be valid JSON.
+-- CLI chat with JSON grammar: forces model output to be valid JSON (object or array).
 -- Usage: luajit test/chat_json.lua [model_path]
 --        luajit test/chat_json.lua --no-grammar [model_path]  -- run without grammar (no constraint)
---
--- Note: Some llama.cpp builds throw "Unexpected empty grammar stack" when using the grammar
--- sampler. If you see a C++ exception, use --no-grammar or a newer llama.cpp build.
 
 package.path = "./?.lua;" .. package.path
 local lluama = require("src.lluama")
@@ -19,7 +16,8 @@ backend:init()
 
 local session_opts = {
 	template = "qwen",
-	system_prompt = "You are a helpful assistant. Respond only with valid JSON. No markdown, no explanation, only a single JSON value (object or array).",
+	system_prompt = "You are a helpful assistant.",
+	-- system_prompt = "You are a helpful assistant. Respond only with valid JSON. No markdown, no explanation, only a single JSON value (object or array).",
 	temp = 0.7,
 }
 if not no_grammar then session_opts.grammar = "json" end

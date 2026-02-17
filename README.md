@@ -8,6 +8,8 @@ Lua (LuaJIT) FFI bindings for [llama.cpp](https://github.com/ggml-org/llama.cpp)
 - **llama.cpp** — shared library and GGML backends on your system. Install and put `llama`/`ggml` on your library path (or PATH on Windows) however you prefer.
 - **A GGUF model** — for the test script, place one at the path used in `test/test_bindings.lua` or edit that path.
 
+**Compatibility:** The bindings are maintained against the [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) API (batch, sampler chain, chat templates, context params). Single-file model loading uses `llama_model_load_from_file` when available and falls back to deprecated `llama_load_model_from_file` for older builds. When upgrading llama.cpp, check release notes for renames or signature changes and update `src/headers/llama_ffi.h` if needed.
+
 ## Running the test
 
 From the repo root, with llama.cpp and a GGUF model available:
@@ -22,7 +24,7 @@ The test loads the model path defined in the script, runs backend init, tokenize
 
 **CLI chat (JSON):** `luajit test/chat_json.lua [model_path]` — same as above with `grammar = "json"` so output is constrained to valid JSON.
 
-**Unit tests** (no model or DLL required for most): `luajit test/unit/run.lua` — runs chat_templates, lluama, and Sampler specs.
+**Unit tests** (no model or DLL required for most): `luajit test/unit/run.lua` — runs lluama, Sampler, and ChatSession specs.
 
 **Integration tests** (Qwen model required): `luajit test/integration_test.lua [model_path] [--loop N]` — load model, tokenize, decode, sampler loop, two turns. Use `--loop 10` to run repeatedly and catch flakes. Call `ctx:set_sampler(sampler)` before `ctx:decode_tokens(...)` so the backend associates logits with the sequence.
 
@@ -34,8 +36,7 @@ The test loads the model path defined in the script, runs backend init, tokenize
 - `src/model.lua` — Model class (context, tokenize, __gc)
 - `src/context.lua` — Context class (decode_tokens, decode_one, logits, set_sampler, __gc)
 - `src/sampler.lua` — Sampler class (temp/dist/top_p chain, accept, sample, __gc)
-- `src/chat_session.lua` — ChatSession (prompt + generate with template and stop logic)
-- `src/chat_templates.lua` — chat templates (Phi-3, Llama 2/3, Qwen, etc.)
+- `src/chat_session.lua` — ChatSession (prompt + generate with template; stop strings from model vocab)
 - `test/test_bindings.lua` — minimal test: load model, tokenize, one decode step
 - `test/unit/run.lua` — unit test runner; `test/unit/*_spec.lua` — specs (no model required)
 
@@ -43,7 +44,7 @@ The test loads the model path defined in the script, runs backend init, tokenize
 
 Require the library; all `llama_*` and `ggml_*` functions live on the returned table.
 
-**Classes:** `Backend`, `Model`, `Context`, `Sampler`, `ChatSession`. Ownership: context holds model, model holds backend; attach a `Sampler` to a context for sampling.
+**Classes:** `Backend`, `Model`, `Context`, `Sampler`, `ChatSession`. Ownership: context holds model, model holds backend; attach a `Sampler` to a context for sampling. Use a given context from a single thread unless the llama.cpp library documents otherwise.
 
 **Simple chat (recommended):** use `ChatSession` so the library handles templates, decode positions, and stop logic.
 
@@ -78,6 +79,8 @@ local err = ctx:decode_tokens(token_ids, 0)  -- second arg: pos_start (for multi
 -- ctx:decode_one(token, pos), sampler:accept(token), sampler:sample(ctx.ctx, logits_idx)
 -- model:token_to_piece(token) — decode a token id to its string piece
 ```
+
+**LoRA:** `lluama.AdapterLora(model, path_lora)` then `ctx:set_adapter_lora(adapter[, scale])` / `ctx:rm_adapter_lora(adapter)` / `ctx:clear_adapter_lora()`. Adapters have no explicit free in the current API; keep them alive while in use.
 
 Raw cdata: use `model.model` and `ctx.ctx` for direct `lluama.llama.llama_*` / `lluama.ggml.ggml_*` calls.
 

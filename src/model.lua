@@ -227,6 +227,14 @@ return function(llama, lluama)
 		local n = llama.llama_model_meta_val_str_by_index(self.model, i, self._meta_val_buf, 256)
 		return n > 0 and ffi.string(self._meta_val_buf, n) or nil
 	end
+	function Model_mt.meta_val_str(self, key)
+		assert_model(self)
+		if not self._meta_val_buf then
+			self._meta_val_buf = ffi.new("char[?]", 256)
+		end
+		local n = llama.llama_model_meta_val_str(self.model, key, self._meta_val_buf, 256)
+		return n > 0 and ffi.string(self._meta_val_buf, n) or nil
+	end
 
 	-- Built-in chat template from model file (name e.g. "chatml")
 	function Model_mt.chat_template(self, name)
@@ -251,6 +259,46 @@ return function(llama, lluama)
 	end
 	function Model_mt.vocab_get_add_bos(self) return llama.llama_vocab_get_add_bos(self:vocab()) end
 	function Model_mt.vocab_get_add_eos(self) return llama.llama_vocab_get_add_eos(self:vocab()) end
+	function Model_mt.vocab_get_add_sep(self) return llama.llama_vocab_get_add_sep(self:vocab()) end
+	function Model_mt.vocab_get_score(self, token) return llama.llama_vocab_get_score(self:vocab(), token) end
+	function Model_mt.vocab_get_attr(self, token) return llama.llama_vocab_get_attr(self:vocab(), token) end
+	function Model_mt.vocab_is_eog(self, token) return llama.llama_vocab_is_eog(self:vocab(), token) end
+	function Model_mt.vocab_is_control(self, token) return llama.llama_vocab_is_control(self:vocab(), token) end
+	function Model_mt.vocab_fim_pre(self) return llama.llama_vocab_fim_pre(self:vocab()) end
+	function Model_mt.vocab_fim_suf(self) return llama.llama_vocab_fim_suf(self:vocab()) end
+	function Model_mt.vocab_fim_mid(self) return llama.llama_vocab_fim_mid(self:vocab()) end
+	function Model_mt.vocab_fim_pad(self) return llama.llama_vocab_fim_pad(self:vocab()) end
+	function Model_mt.vocab_fim_rep(self) return llama.llama_vocab_fim_rep(self:vocab()) end
+	function Model_mt.vocab_fim_sep(self) return llama.llama_vocab_fim_sep(self:vocab()) end
+
+	-- Stop strings derived from vocab (for chat reply trimming). Returns array of strings from
+	-- special tokens (eos, eot, sep) and any token marked eog or control. Sorted by length
+	-- descending so longer sequences are matched first. Used by ChatSession instead of a template table.
+	function Model_mt.stop_strings_from_vocab(self)
+		assert_model(self)
+		local vocab = self:vocab()
+		local seen = {}
+		local function add(s)
+			if s and #s > 0 and not seen[s] then
+				seen[s] = true
+			end
+		end
+		for _, tid in ipairs({ self:eos(), self:eot(), self:sep() }) do
+			if tid and tid >= 0 then
+				add(self:vocab_get_text(tid))
+			end
+		end
+		local n = llama.llama_vocab_n_tokens(vocab)
+		for i = 0, n - 1 do
+			if llama.llama_vocab_is_eog(vocab, i) or llama.llama_vocab_is_control(vocab, i) then
+				add(self:vocab_get_text(i))
+			end
+		end
+		local out = {}
+		for s, _ in pairs(seen) do out[#out + 1] = s end
+		table.sort(out, function(a, b) return #a > #b end)
+		return out
+	end
 
 	-- Detokenize: token ids -> string. remove_special, unparse_special (default false).
 	function Model_mt.detokenize(self, token_ids, remove_special, unparse_special)
@@ -297,19 +345,48 @@ return function(llama, lluama)
 		return ffi.string(buf, n > DESC_BUF_SIZE and DESC_BUF_SIZE or n)
 	end
 
-	return function(backend, path, opts)
-		opts = opts or {}
-		local mparams = llama.llama_model_default_params()
-		if opts.n_gpu_layers ~= nil then mparams.n_gpu_layers = opts.n_gpu_layers end
-		if opts.use_mmap ~= nil then mparams.use_mmap = opts.use_mmap end
-		if opts.use_mlock ~= nil then mparams.use_mlock = opts.use_mlock end
-		local model = llama.llama_load_model_from_file(path, mparams)
-		if model == nil then
-			error("lluama: failed to load model: " .. tostring(path))
-		end
+	local function wrap(backend, model)
 		return setmetatable({
 			model = model,
 			backend = backend,
 		}, Model_mt)
 	end
+
+	-- Prefer current API; fall back to deprecated symbol for older llama.cpp builds.
+	local load_model_from_file = llama.llama_model_load_from_file or llama.llama_load_model_from_file
+	if not load_model_from_file then
+		error("lluama: llama library does not export llama_model_load_from_file or llama_load_model_from_file")
+	end
+
+	local function load_from_file(backend, path, opts)
+		opts = opts or {}
+		local mparams = llama.llama_model_default_params()
+		if opts.n_gpu_layers ~= nil then mparams.n_gpu_layers = opts.n_gpu_layers end
+		if opts.use_mmap ~= nil then mparams.use_mmap = opts.use_mmap end
+		if opts.use_mlock ~= nil then mparams.use_mlock = opts.use_mlock end
+		local model = load_model_from_file(path, mparams)
+		if model == nil then
+			error("lluama: failed to load model: " .. tostring(path))
+		end
+		return wrap(backend, model)
+	end
+
+	local function load_from_splits(backend, paths, opts)
+		opts = opts or {}
+		local n = #paths
+		if n == 0 then error("lluama: load_model_from_splits requires at least one path") end
+		local path_ptrs = ffi.new("const char*[?]", n)
+		for i = 0, n - 1 do path_ptrs[i] = paths[i + 1] end
+		local mparams = llama.llama_model_default_params()
+		if opts.n_gpu_layers ~= nil then mparams.n_gpu_layers = opts.n_gpu_layers end
+		if opts.use_mmap ~= nil then mparams.use_mmap = opts.use_mmap end
+		if opts.use_mlock ~= nil then mparams.use_mlock = opts.use_mlock end
+		local model = llama.llama_model_load_from_splits(path_ptrs, n, mparams)
+		if model == nil then
+			error("lluama: failed to load model from splits")
+		end
+		return wrap(backend, model)
+	end
+
+	return load_from_file, load_from_splits
 end

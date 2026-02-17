@@ -1,5 +1,7 @@
 -- CLI chat using the library's ChatSession. Run from repo root.
 -- Usage: luajit test/chat.lua [model_path]
+-- Requires a GGUF model with a chat template (tokenizer.chat_template in metadata).
+-- If your model has no template, pass opts.template_string with the Jinja template.
 
 package.path = "./?.lua;" .. package.path
 local lluama = require("src.lluama")
@@ -11,9 +13,9 @@ local backend = lluama.Backend()
 backend:init()
 
 local session = lluama.ChatSession(backend, model_path, {
-	template = "qwen",
+	template = "chatml",
 	system_prompt = "You are a helpful assistant. Answer concisely.",
-	temp = 0.7,
+	temp = 0.0,
 })
 
 print("Ready. Type a message and press Enter (empty to quit).")

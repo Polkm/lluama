@@ -29,8 +29,10 @@ while i <= #arg do
 end
 
 local llama = lluama.llama
-local t = lluama.chat_templates.get("qwen")
-assert(t, "qwen template required")
+
+local function get_model_template(model)
+	return model:chat_template("chatml") or model:chat_template("qwen") or model:chat_template("default")
+end
 
 local tests = {}
 
@@ -110,16 +112,16 @@ function tests.sampler_loop()
 	local backend = lluama.Backend()
 	backend:init()
 	local model = lluama.Model(backend, model_path)
+	local tmpl = get_model_template(model)
+	assert(tmpl and #tmpl > 0, "model must have chat template")
 	local ctx = model:context({ n_ctx = 2048, n_batch = 512 })
 	local vocab = model:vocab()
 	local eos = llama.llama_vocab_eos(vocab)
 
-	-- Match chat.lua first turn exactly (system + user) to avoid sampler path differences
-	local prompt = lluama.chat_templates.format_conversation(
-		{ { role = "user", content = "Hi" } },
-		"You are a helpful assistant. Answer concisely.",
-		t
-	)
+	local prompt = lluama.chat_apply_template(tmpl, {
+		{ role = "system", content = "You are a helpful assistant. Answer concisely." },
+		{ role = "user", content = "Hi" },
+	}, true)
 	local tokens = model:tokenize(prompt, false)
 	assert(#tokens >= 1)
 	-- Set sampler before decode (same as chat.lua) so backend associates logits with seq 0
@@ -154,6 +156,8 @@ function tests.two_turns()
 	local backend = lluama.Backend()
 	backend:init()
 	local model = lluama.Model(backend, model_path)
+	local tmpl = get_model_template(model)
+	assert(tmpl and #tmpl > 0, "model must have chat template")
 	local ctx = model:context({ n_ctx = 1024, n_batch = 512 })
 	local vocab = model:vocab()
 	local eos = llama.llama_vocab_eos(vocab)
@@ -162,11 +166,9 @@ function tests.two_turns()
 
 	local n_past = 0
 	for turn = 1, 2 do
-		local prompt = lluama.chat_templates.format_conversation(
-			{ { role = "user", content = "Say number " .. tostring(turn) } },
-			nil,
-			t
-		)
+		local prompt = lluama.chat_apply_template(tmpl, {
+			{ role = "user", content = "Say number " .. tostring(turn) } },
+		true)
 		local tokens = model:tokenize(prompt, false)
 		assert(#tokens >= 1)
 		local err = ctx:decode_tokens(tokens, n_past)
@@ -195,6 +197,8 @@ function tests.chat_style_turns()
 	local backend = lluama.Backend()
 	backend:init()
 	local model = lluama.Model(backend, model_path)
+	local tmpl = get_model_template(model)
+	assert(tmpl and #tmpl > 0, "model must have chat template")
 	local ctx = model:context({ n_ctx = 2048, n_batch = 512 })
 	local vocab = model:vocab()
 	local eos = llama.llama_vocab_eos(vocab)
@@ -202,11 +206,10 @@ function tests.chat_style_turns()
 	ctx:set_sampler(sampler)
 
 	-- Turn 1: like first user message in chat (system + user "Hello?")
-	local prompt1 = lluama.chat_templates.format_conversation(
-		{ { role = "user", content = "Hello?" } },
-		"You are a helpful assistant. Answer concisely.",
-		t
-	)
+	local prompt1 = lluama.chat_apply_template(tmpl, {
+		{ role = "system", content = "You are a helpful assistant. Answer concisely." },
+		{ role = "user", content = "Hello?" },
+	}, true)
 	local tokens1 = model:tokenize(prompt1, false)
 	assert(#tokens1 >= 1)
 	local err = ctx:decode_tokens(tokens1, 0)
@@ -226,8 +229,10 @@ function tests.chat_style_turns()
 		logits_idx = 0
 	end
 
-	-- Turn 2: like second user message in chat (user_start .. line .. user_end .. assistant_start)
-	local prompt2 = t.user_start .. "Write a python script to plot a line" .. t.user_end .. t.assistant_start
+	-- Turn 2: like second user message in chat (user message only, add_assistant=true)
+	local prompt2 = lluama.chat_apply_template(tmpl, {
+		{ role = "user", content = "Write a python script to plot a line" },
+	}, true)
 	local tokens2 = model:tokenize(prompt2, false)
 	assert(#tokens2 >= 1)
 	err = ctx:decode_tokens(tokens2, n_past)

@@ -1,8 +1,10 @@
 -- Built-in GBNF grammars for constrained decoding.
+-- JSON grammar uses a prefix so ChatSession can accept the chat prompt (prefix) then generate object only.
 -- grammar_root for JSON is "root".
 
 local json_gbnf = [[
-root ::= ws object
+root ::= prefix value
+prefix ::= .* "\n"
 value ::= object | array | string | number | ("true" | "false" | "null") ws
 
 object ::=

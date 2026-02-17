@@ -6,6 +6,14 @@ local ffi = require("ffi")
 return function(llama)
 	local LLAMA_SEQ_ID = 0
 	local seq_id_one = ffi.new("int32_t[1]", LLAMA_SEQ_ID)
+	local context_abort_registry = {}
+	local abort_cb_type = ffi.typeof("bool (*)(void*)")
+	local abort_cb = ffi.cast(abort_cb_type, function(ud)
+		if ud == nil then return false end
+		local ctx = ffi.cast("struct llama_context*", ud)
+		local fn = context_abort_registry[ctx]
+		return fn and fn() or false
+	end)
 
 	local function assert_ctx(self)
 		if self.ctx == nil then
@@ -15,7 +23,16 @@ return function(llama)
 
 	local Context_mt = {
 		__gc = function(self)
+			if self._batch ~= nil then
+				llama.llama_batch_free(self._batch)
+				self._batch = nil
+			end
+			if self._one_batch ~= nil then
+				llama.llama_batch_free(self._one_batch)
+				self._one_batch = nil
+			end
 			if self.ctx ~= nil then
+				context_abort_registry[self.ctx] = nil
 				llama.llama_free(self.ctx)
 				self.ctx = nil
 			end
@@ -85,6 +102,17 @@ return function(llama)
 		assert_ctx(self)
 		llama.llama_synchronize(self.ctx)
 	end
+	-- Set abort callback for long evals. cb() should return true to abort. Pass nil to clear.
+	function Context_mt.set_abort_callback(self, cb)
+		assert_ctx(self)
+		if cb == nil then
+			context_abort_registry[self.ctx] = nil
+			llama.llama_set_abort_callback(self.ctx, nil, nil)
+		else
+			context_abort_registry[self.ctx] = cb
+			llama.llama_set_abort_callback(self.ctx, abort_cb, self.ctx)
+		end
+	end
 
 	-- token_ids: array of token ids. pos_start: optional (default 0) first position in context.
 	function Context_mt.decode_tokens(self, token_ids, pos_start)
@@ -95,6 +123,9 @@ return function(llama)
 		-- Use a batch with explicit seq_id (0) and logits only on last position.
 		local batch = self._batch
 		if not batch or self._batch_cap < n then
+			if self._batch ~= nil then
+				llama.llama_batch_free(self._batch)
+			end
 			self._batch_cap = math.max(n, 256)
 			batch = llama.llama_batch_init(self._batch_cap, 0, 1)
 			self._batch = batch
@@ -216,6 +247,200 @@ return function(llama)
 	function Context_mt.state_seq_set_data(self, src_buf, size, dest_seq_id)
 		assert_ctx(self)
 		return llama.llama_state_seq_set_data(self.ctx, src_buf, size or ffi.sizeof(src_buf), dest_seq_id or LLAMA_SEQ_ID)
+	end
+	-- Per-sequence state save/load to file
+	function Context_mt.state_seq_save_file(self, path, seq_id, token_ids)
+		assert_ctx(self)
+		seq_id = seq_id or LLAMA_SEQ_ID
+		local n = token_ids and #token_ids or 0
+		local tokens_ptr = nil
+		if n > 0 then
+			local buf = ffi.new("int32_t[?]", n)
+			for i = 0, n - 1 do buf[i] = token_ids[i + 1] end
+			tokens_ptr = buf
+		end
+		return llama.llama_state_seq_save_file(self.ctx, path, seq_id, tokens_ptr, n)
+	end
+	function Context_mt.state_seq_load_file(self, path, dest_seq_id, n_cap)
+		assert_ctx(self)
+		local cap = n_cap or 65536
+		local token_buffer = ffi.new("int32_t[?]", cap)
+		local n_out = ffi.new("size_t[1]")
+		local sz = llama.llama_state_seq_load_file(self.ctx, path, dest_seq_id or LLAMA_SEQ_ID, token_buffer, cap, n_out)
+		if sz == 0 then return nil end
+		local out = {}
+		for i = 0, n_out[0] - 1 do out[i + 1] = token_buffer[i] end
+		return out
+	end
+	-- Extended state (flags: uint32_t, pass as number)
+	function Context_mt.state_seq_get_size_ext(self, seq_id, flags)
+		assert_ctx(self)
+		return llama.llama_state_seq_get_size_ext(self.ctx, seq_id or LLAMA_SEQ_ID, flags or 0)
+	end
+	function Context_mt.state_seq_get_data_ext(self, dst_buf, size, seq_id, flags)
+		assert_ctx(self)
+		return llama.llama_state_seq_get_data_ext(self.ctx, dst_buf, size, seq_id or LLAMA_SEQ_ID, flags or 0)
+	end
+	function Context_mt.state_seq_set_data_ext(self, src_buf, size, dest_seq_id, flags)
+		assert_ctx(self)
+		return llama.llama_state_seq_set_data_ext(self.ctx, src_buf, size or ffi.sizeof(src_buf), dest_seq_id or LLAMA_SEQ_ID, flags or 0)
+	end
+
+	-- Sampled token/probs/candidates (when using a sampler)
+	function Context_mt.sampled_token_ith(self, i)
+		assert_ctx(self)
+		return llama.llama_get_sampled_token_ith(self.ctx, i)
+	end
+	function Context_mt.sampled_probs_count_ith(self, i)
+		assert_ctx(self)
+		return llama.llama_get_sampled_probs_count_ith(self.ctx, i)
+	end
+	function Context_mt.sampled_probs_ith(self, i)
+		assert_ctx(self)
+		local n = llama.llama_get_sampled_probs_count_ith(self.ctx, i)
+		if n == 0 then return {} end
+		local p = llama.llama_get_sampled_probs_ith(self.ctx, i)
+		if p == nil then return {} end
+		local out = {}
+		for j = 0, n - 1 do out[j + 1] = p[j] end
+		return out
+	end
+	function Context_mt.sampled_logits_count_ith(self, i)
+		assert_ctx(self)
+		return llama.llama_get_sampled_logits_count_ith(self.ctx, i)
+	end
+	function Context_mt.sampled_logits_ith(self, i)
+		assert_ctx(self)
+		local n = llama.llama_get_sampled_logits_count_ith(self.ctx, i)
+		if n == 0 then return {} end
+		local p = llama.llama_get_sampled_logits_ith(self.ctx, i)
+		if p == nil then return {} end
+		local out = {}
+		for j = 0, n - 1 do out[j + 1] = p[j] end
+		return out
+	end
+	function Context_mt.sampled_candidates_count_ith(self, i)
+		assert_ctx(self)
+		return llama.llama_get_sampled_candidates_count_ith(self.ctx, i)
+	end
+	function Context_mt.sampled_candidates_ith(self, i)
+		assert_ctx(self)
+		local n = llama.llama_get_sampled_candidates_count_ith(self.ctx, i)
+		if n == 0 then return {} end
+		local p = llama.llama_get_sampled_candidates_ith(self.ctx, i)
+		if p == nil then return {} end
+		local out = {}
+		for j = 0, n - 1 do out[j + 1] = p[j] end
+		return out
+	end
+
+	-- Performance
+	function Context_mt.perf_context(self)
+		assert_ctx(self)
+		local d = llama.llama_perf_context(self.ctx)
+		return {
+			t_start_ms = d.t_start_ms,
+			t_load_ms = d.t_load_ms,
+			t_p_eval_ms = d.t_p_eval_ms,
+			t_eval_ms = d.t_eval_ms,
+			n_p_eval = d.n_p_eval,
+			n_eval = d.n_eval,
+			n_reused = d.n_reused,
+		}
+	end
+	function Context_mt.perf_context_print(self)
+		assert_ctx(self)
+		llama.llama_perf_context_print(self.ctx)
+	end
+	function Context_mt.perf_context_reset(self)
+		assert_ctx(self)
+		llama.llama_perf_context_reset(self.ctx)
+	end
+	function Context_mt.memory_breakdown_print(self)
+		assert_ctx(self)
+		llama.llama_memory_breakdown_print(self.ctx)
+	end
+
+	-- KV memory handle (opaque; for memory_* APIs)
+	function Context_mt.get_memory(self)
+		assert_ctx(self)
+		return llama.llama_get_memory(self.ctx)
+	end
+	-- KV memory operations (multi-sequence)
+	function Context_mt.memory_clear(self, data)
+		assert_ctx(self)
+		llama.llama_memory_clear(llama.llama_get_memory(self.ctx), data == true)
+	end
+	function Context_mt.memory_seq_rm(self, seq_id, p0, p1)
+		assert_ctx(self)
+		return llama.llama_memory_seq_rm(llama.llama_get_memory(self.ctx), seq_id, p0, p1)
+	end
+	function Context_mt.memory_seq_cp(self, seq_id_src, seq_id_dst, p0, p1)
+		assert_ctx(self)
+		llama.llama_memory_seq_cp(llama.llama_get_memory(self.ctx), seq_id_src, seq_id_dst, p0, p1)
+	end
+	function Context_mt.memory_seq_keep(self, seq_id)
+		assert_ctx(self)
+		llama.llama_memory_seq_keep(llama.llama_get_memory(self.ctx), seq_id)
+	end
+	function Context_mt.memory_seq_add(self, seq_id, p0, p1, delta)
+		assert_ctx(self)
+		llama.llama_memory_seq_add(llama.llama_get_memory(self.ctx), seq_id, p0, p1, delta)
+	end
+	function Context_mt.memory_seq_div(self, seq_id, p0, p1, d)
+		assert_ctx(self)
+		llama.llama_memory_seq_div(llama.llama_get_memory(self.ctx), seq_id, p0, p1, d)
+	end
+	function Context_mt.memory_seq_pos_min(self, seq_id)
+		assert_ctx(self)
+		return llama.llama_memory_seq_pos_min(llama.llama_get_memory(self.ctx), seq_id)
+	end
+	function Context_mt.memory_seq_pos_max(self, seq_id)
+		assert_ctx(self)
+		return llama.llama_memory_seq_pos_max(llama.llama_get_memory(self.ctx), seq_id)
+	end
+	function Context_mt.memory_can_shift(self)
+		assert_ctx(self)
+		return llama.llama_memory_can_shift(llama.llama_get_memory(self.ctx))
+	end
+
+	-- Threadpool (advanced; threadpool_cdata is ggml type)
+	function Context_mt.attach_threadpool(self, threadpool, threadpool_batch)
+		assert_ctx(self)
+		llama.llama_attach_threadpool(self.ctx, threadpool, threadpool_batch)
+	end
+	function Context_mt.detach_threadpool(self)
+		assert_ctx(self)
+		llama.llama_detach_threadpool(self.ctx)
+	end
+
+	-- LoRA adapter
+	function Context_mt.set_adapter_lora(self, adapter, scale)
+		assert_ctx(self)
+		local adptr = adapter.adapter or adapter
+		return llama.llama_set_adapter_lora(self.ctx, adptr, scale or 1.0)
+	end
+	function Context_mt.rm_adapter_lora(self, adapter)
+		assert_ctx(self)
+		local adptr = adapter.adapter or adapter
+		return llama.llama_rm_adapter_lora(self.ctx, adptr)
+	end
+	function Context_mt.clear_adapter_lora(self)
+		assert_ctx(self)
+		llama.llama_clear_adapter_lora(self.ctx)
+	end
+	function Context_mt.apply_adapter_cvec(self, data, len, n_embd, il_start, il_end)
+		assert_ctx(self)
+		local buf
+		if type(data) == "table" then
+			len = len or #data
+			buf = ffi.new("float[?]", len)
+			for i = 0, len - 1 do buf[i] = data[i + 1] end
+		else
+			buf = data
+			len = len or ffi.sizeof(buf) / ffi.sizeof("float")
+		end
+		return llama.llama_apply_adapter_cvec(self.ctx, buf, len, n_embd, il_start, il_end)
 	end
 
 	return function(model, ctx)

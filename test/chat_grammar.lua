@@ -1,6 +1,7 @@
 -- Basic chat with a simple grammar: each reply is constrained to "yes" or "no".
 -- Uses the chat template so the model sees normal context. The prompt must end with a newline
 -- so that prefix (.* "\n") is fully matched before we generate; then only "yes"|"no" is allowed.
+-- If the model always says "yes", that's model bias (not a bug); try higher temp or another seed.
 -- Usage: luajit test/chat_grammar.lua [model_path]
 
 package.path = "./?.lua;" .. package.path
@@ -8,10 +9,6 @@ local lluama = require("src.lluama")
 
 local model_path = arg[1] or "models/Qwen2.5-Coder-1.5B-Instruct-Q3_K_S.gguf"
 local max_tokens = 64
-
-local templates = lluama.chat_templates
-local t = templates.get("qwen")
-assert(t, "qwen template required")
 
 -- Grammar: prefix (any chars ending with newline) then "yes" or "no". Prompt must end with \n.
 local gbnf = [[
@@ -25,14 +22,17 @@ local backend = lluama.Backend()
 backend:init()
 
 local model = lluama.Model(backend, model_path)
+local chat_tmpl = model:chat_template("qwen") or model:chat_template("chatml") or model:chat_template("default")
+assert(chat_tmpl and #chat_tmpl > 0, "model must have chat template")
 local ctx = model:context({ n_ctx = 512, n_batch = 256 })
 local eos = llama.llama_vocab_eos(model:vocab())
 
+-- Slightly higher temp so "no" can be sampled when the model is biased toward "yes".
 local sampler = lluama.Sampler({
 	grammar = gbnf,
 	grammar_root = "root",
-	temp = 0.5,
-	seed = 42,
+	temp = 0.8,
+	seed = (os and os.time and os.time()) and (os.time() % 2147483647) or 42,
 }, model)
 ctx:set_sampler(sampler)
 
@@ -40,19 +40,19 @@ local state = { n_past = 0, first_turn = true }
 
 local function generate_one_reply(user_message)
 	sampler:reset()
-	local prompt
+	local messages
 	if state.first_turn then
-		prompt = templates.format_conversation(
-			{ { role = "user", content = user_message } },
-			"Answer only with the word yes or no. No explanation.",
-			t
-		)
 		state.first_turn = false
+		messages = {
+			{ role = "system", content = "Answer only with the word yes or no. No explanation." },
+			{ role = "user", content = user_message },
+		}
 	else
-		prompt = t.user_start .. user_message .. t.user_end .. t.assistant_start
+		messages = { { role = "user", content = user_message } }
 	end
+	local prompt = lluama.chat_apply_template(chat_tmpl, messages, true)
 	-- Ensure prompt ends with newline so grammar prefix is complete before we generate.
-	if prompt:sub(-1) ~= "\n" then prompt = prompt .. "\n" end
+	if prompt and prompt:sub(-1) ~= "\n" then prompt = prompt .. "\n" end
 
 	local tokens = model:tokenize(prompt, false)
 	if #tokens == 0 then return "" end
