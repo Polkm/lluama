@@ -30,8 +30,21 @@ end
 
 local llama = lluama.llama
 
+-- Resolve chat template (same order as ChatSession) so tests find template regardless of name.
 local function get_model_template(model)
-	return model:chat_template("chatml") or model:chat_template("qwen") or model:chat_template("default")
+	for _, name in ipairs({ "chatml", "qwen", "default", "tokenizer", "tokenizer.chat_template" }) do
+		local t = model:chat_template(name)
+		if t and #t > 0 then return t end
+	end
+	local t = model:meta_val_str("tokenizer.chat_template")
+	if t and #t > 0 then return t end
+	for _, name in ipairs(lluama.chat_builtin_templates()) do
+		if name and #name > 0 then
+			local t = model:chat_template(name)
+			if t and #t > 0 then return t end
+		end
+	end
+	return nil
 end
 
 local tests = {}

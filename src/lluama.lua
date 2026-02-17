@@ -66,6 +66,40 @@ function lluama.chat_builtin_templates()
 	return chat_native.chat_builtin_templates()
 end
 
+-- Threadpool: create/free for use with ctx:attach_threadpool(ctx, tp, tp_batch).
+-- n_threads: for decode (generation). n_threads_batch: for batch (prefill); omit to use one pool for both.
+-- Returns (tp, tp_batch) or (nil, nil) if the build does not export ggml_threadpool_create/ggml_threadpool_free.
+local threadpool_ffi
+function lluama.threadpool_create(n_threads, n_threads_batch)
+	n_threads = n_threads or -1
+	n_threads_batch = n_threads_batch or n_threads
+	if not threadpool_ffi then
+		local ok, mod = pcall(require, "src.threadpool_ffi")
+		threadpool_ffi = (ok and mod) and mod or {}
+	end
+	local create = threadpool_ffi.create
+	if not create then
+		return nil, nil
+	end
+	local n = (n_threads > 0) and n_threads or 1
+	local tp = create(n)
+	if not tp then return nil, nil end
+	local n_batch = (n_threads_batch and n_threads_batch > 0) and n_threads_batch or n
+	local tp_batch = (n_batch == n) and tp or create(n_batch)
+	if not tp_batch then tp_batch = tp end
+	return tp, tp_batch
+end
+function lluama.threadpool_free(tp, tp_batch)
+	if not threadpool_ffi then return end
+	local free = threadpool_ffi.free
+	if free and tp then
+		free(tp)
+		if tp_batch and tp_batch ~= tp then
+			free(tp_batch)
+		end
+	end
+end
+
 -- Split model paths: build path for split N of M; get prefix from split path. Return string or nil on error.
 function lluama.split_path(path_prefix, split_no, split_count)
 	local buf = ffi.new("char[?]", 1024)

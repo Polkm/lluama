@@ -173,6 +173,7 @@ return function(llama)
 		return llama.llama_get_logits_ith(self.ctx, i)
 	end
 	-- Top-k token ids and probs from logits at position i (softmax). Works with client-side sampling.
+	-- Keeps only top-k in a single pass to avoid O(n_vocab) allocations and full sort.
 	function Context_mt.logits_top_k_ith(self, i, k)
 		assert_ctx(self)
 		k = k or 10
@@ -191,15 +192,25 @@ return function(llama)
 			sum_exp = sum_exp + math.exp(logits[j] - max_logit)
 		end
 		if sum_exp <= 0 then return {} end
-		local list = {}
+		local top = {}
 		for j = 0, n_vocab - 1 do
 			local p = math.exp(logits[j] - max_logit) / sum_exp
-			list[#list + 1] = { id = j, p = p, logit = logits[j] }
+			if #top < k then
+				local idx = #top + 1
+				for ii = 1, #top do
+					if p > top[ii].p then idx = ii; break end
+				end
+				table.insert(top, idx, { id = j, p = p })
+			elseif p > top[k].p then
+				local idx = k
+				for ii = 1, k do
+					if p > top[ii].p then idx = ii; break end
+				end
+				for ii = k, idx + 1, -1 do top[ii] = top[ii - 1] end
+				top[idx] = { id = j, p = p }
+			end
 		end
-		table.sort(list, function(a, b) return a.p > b.p end)
-		local out = {}
-		for j = 1, math.min(k, #list) do out[j] = { id = list[j].id, p = list[j].p } end
-		return out
+		return top
 	end
 	function Context_mt.embeddings(self)
 		assert_ctx(self)
