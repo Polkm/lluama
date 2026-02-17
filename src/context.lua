@@ -333,6 +333,26 @@ return function(llama)
 		for j = 0, n - 1 do out[j + 1] = p[j] end
 		return out
 	end
+	-- Top-k sampled token ids and probs for the ith output. Returns { { id = token_id, p = prob }, ... }.
+	function Context_mt.sampled_top_k_ith(self, i, k)
+		assert_ctx(self)
+		k = k or 10
+		local nc = llama.llama_get_sampled_candidates_count_ith(self.ctx, i)
+		local np = llama.llama_get_sampled_probs_count_ith(self.ctx, i)
+		if nc == 0 or np == 0 then return {} end
+		local cand = llama.llama_get_sampled_candidates_ith(self.ctx, i)
+		local probs = llama.llama_get_sampled_probs_ith(self.ctx, i)
+		if cand == nil or probs == nil then return {} end
+		local n = math.min(nc, np)
+		local list = {}
+		for j = 0, n - 1 do
+			list[j + 1] = { id = cand[j], p = probs[j] }
+		end
+		table.sort(list, function(a, b) return a.p > b.p end)
+		local out = {}
+		for j = 1, math.min(k, #list) do out[j] = list[j] end
+		return out
+	end
 
 	-- Performance
 	function Context_mt.perf_context(self)

@@ -147,22 +147,45 @@ return function(lluama)
 		return reply
 	end
 
-	return function(backend, model_path, opts)
-		opts = opts or {}
-		local template_name = opts.template or "chatml"
-		local model = lluama.Model(backend, model_path)
-		local native_tmpl = opts.template_string
-		if not native_tmpl or #native_tmpl == 0 then
-			native_tmpl = model:chat_template(template_name)
-				or model:chat_template("default")
-				or model:chat_template("tokenizer")
-				or model:chat_template("tokenizer.chat_template")
-			if not native_tmpl or #native_tmpl == 0 then
-				native_tmpl = model:meta_val_str("tokenizer.chat_template")
+	-- Resolve chat template: opts.template_string, or auto-detect from model.
+	local function resolve_template(model, opts)
+		if opts.template_string and #opts.template_string > 0 then
+			return opts.template_string
+		end
+		local try_name = opts.template
+		local is_auto = not try_name or try_name == "" or try_name == "auto"
+		if not is_auto then
+			local t = model:chat_template(try_name)
+			if t and #t > 0 then return t end
+		end
+		for _, name in ipairs({ "default", "tokenizer", "tokenizer.chat_template" }) do
+			local t = model:chat_template(name)
+			if t and #t > 0 then return t end
+		end
+		local t = model:meta_val_str("tokenizer.chat_template")
+		if t and #t > 0 then return t end
+		for _, name in ipairs(lluama.chat_builtin_templates()) do
+			if name and #name > 0 then
+				local t = model:chat_template(name)
+				if t and #t > 0 then return t end
 			end
 		end
+		return nil
+	end
+
+	return function(backend, model_path, opts)
+		opts = opts or {}
+		local load_opts = {
+			progress_callback = opts.progress_callback,
+			kv_overrides = opts.kv_overrides,
+			n_gpu_layers = opts.n_gpu_layers,
+			use_mmap = opts.use_mmap,
+			use_mlock = opts.use_mlock,
+		}
+		local model = lluama.Model(backend, model_path, load_opts)
+		local native_tmpl = resolve_template(model, opts)
 		if not native_tmpl or #native_tmpl == 0 then
-			error("ChatSession: model has no chat template. Use a GGUF with tokenizer.chat_template, or pass opts.template_string with the template.")
+			error("ChatSession: model has no chat template. Use a GGUF with tokenizer.chat_template, or pass opts.template_string.")
 		end
 		local stop_sequences = model:stop_strings_from_vocab()
 		local ctx = model:context({

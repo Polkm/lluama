@@ -24,6 +24,8 @@ The test loads the model path defined in the script, runs backend init, tokenize
 
 **CLI chat (JSON):** `luajit test/chat_json.lua [model_path]` — same as above with `grammar = "json"` so output is constrained to valid JSON.
 
+**Demo chat:** `luajit test/chat_demo.lua [--show-probs] [--context-length N] [model_path]` — progress bar on load, optional top-5 token probs after each reply, `/embed <text>` for one-shot embedding, `/probs` to toggle probs. Uses `progress_callback` and optional `kv_overrides` (e.g. context length).
+
 **Unit tests** (no model or DLL required for most): `luajit test/unit/run.lua` — runs lluama, Sampler, and ChatSession specs.
 
 **Integration tests** (Qwen model required): `luajit test/integration_test.lua [model_path] [--loop N]` — load model, tokenize, decode, sampler loop, two turns. Use `--loop 10` to run repeatedly and catch flakes. Call `ctx:set_sampler(sampler)` before `ctx:decode_tokens(...)` so the backend associates logits with the sequence.
@@ -54,7 +56,7 @@ local backend = lluama.Backend()
 backend:init()
 
 local session = lluama.ChatSession(backend, "path/to/model.gguf", {
-  template = "qwen",           -- or "chatml", "llama3", etc.
+  -- template = "auto",        -- optional: auto-detect from model (default); or "chatml", "qwen", "llama3", etc.
   system_prompt = "You are a helpful assistant.",
   temp = 0.7,
   grammar = "json",            -- optional: force output to be valid JSON
@@ -78,7 +80,16 @@ local token_ids = model:tokenize("Hello", false)
 local err = ctx:decode_tokens(token_ids, 0)  -- second arg: pos_start (for multi-turn)
 -- ctx:decode_one(token, pos), sampler:accept(token), sampler:sample(ctx.ctx, logits_idx)
 -- model:token_to_piece(token) — decode a token id to its string piece
+-- ctx:sampled_top_k_ith(0, 5) — after sampling, get top-5 token ids and probs for the last output
 ```
+
+**Embeddings:** For embedding models, create a context with `embeddings = true` and optional `pooling_type` (`"mean"`, `"cls"`, `"last"`, `"rank"`), then `encode` a batch and read `ctx:embeddings_seq(seq_id)`. One-shot helper: `model:embed("text to embed", { pooling_type = "mean" })` returns a Lua array of floats (pooled embedding vector).
+
+**Classifier / reranker:** Use a context with `embeddings = true` and `pooling_type = "rank"`. After encoding, `ctx:embeddings_seq(seq_id)` returns the rank scores. For classifier models, `model:n_cls_out()` and `model:cls_label(i)` give the number of classes and label strings.
+
+**Model load options:** `lluama.Model(backend, path, { progress_callback = function(p) print(p) end })` reports load progress (0.0–1.0); return `true` from the callback to abort. `kv_overrides = { { key = "context_length", type = "int", value = 8192 } }` overrides model metadata at load (types: `"int"`, `"float"`, `"bool"`, `"str"`).
+
+**NUMA:** On multi-socket systems, call `backend:numa_init(strategy)` before `backend:init()` (e.g. strategy `0` = disabled, see ggml NUMA docs).
 
 **LoRA:** `lluama.AdapterLora(model, path_lora)` then `ctx:set_adapter_lora(adapter[, scale])` / `ctx:rm_adapter_lora(adapter)` / `ctx:clear_adapter_lora()`. Adapters have no explicit free in the current API; keep them alive while in use.
 

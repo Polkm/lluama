@@ -8,6 +8,15 @@ local PIECE_BUF_SIZE = 256
 local DESC_BUF_SIZE = 256
 
 return function(llama, lluama)
+	-- Trampoline for model load progress: C calls this; we invoke the current Lua callback.
+	local progress_cb_ref = nil
+	local progress_trampoline = ffi.cast("bool (*)(float, void*)", function(progress, _ud)
+		if progress_cb_ref then
+			return progress_cb_ref(progress) == true
+		end
+		return false
+	end)
+
 	local function assert_model(self)
 		if self.model == nil then
 			error("lluama: model already freed")
@@ -36,7 +45,8 @@ return function(llama, lluama)
 	}
 	Model_mt.__index = Model_mt
 
-	-- opts: n_ctx, n_batch, n_threads, n_threads_batch
+	-- opts: n_ctx, n_batch, n_threads, n_threads_batch, embeddings, pooling_type, rope_freq_base, rope_freq_scale
+	-- pooling_type: "none"|"mean"|"cls"|"last"|"rank" or enum number (LLAMA_POOLING_TYPE_*).
 	function Model_mt.context(self, opts)
 		assert_model(self)
 		opts = opts or {}
@@ -45,11 +55,69 @@ return function(llama, lluama)
 		cparams.n_batch = opts.n_batch or 256
 		if opts.n_threads ~= nil then cparams.n_threads = opts.n_threads end
 		if opts.n_threads_batch ~= nil then cparams.n_threads_batch = opts.n_threads_batch end
+		if opts.embeddings == true then
+			cparams.embeddings = true
+		end
+		if opts.pooling_type ~= nil then
+			local p = opts.pooling_type
+			if type(p) == "string" then
+				local t = { none = 0, mean = 1, cls = 2, last = 3, rank = 4 }
+				cparams.pooling_type = t[p:lower()] or 0
+			else
+				cparams.pooling_type = p
+			end
+		end
+		if opts.rope_freq_base ~= nil then cparams.rope_freq_base = opts.rope_freq_base end
+		if opts.rope_freq_scale ~= nil then cparams.rope_freq_scale = opts.rope_freq_scale end
 		local ctx = llama.llama_new_context_with_model(self.model, cparams)
 		if ctx == nil then
 			error("lluama: failed to create context")
 		end
 		return lluama.Context(self, ctx)
+	end
+
+	-- One-shot embed: tokenize text, encode with embeddings=true, return pooled embedding as array of floats.
+	-- opts: pooling_type (default "mean"), n_ctx (default from token count).
+	function Model_mt.embed(self, text, opts)
+		assert_model(self)
+		opts = opts or {}
+		local tokens = self:tokenize(text or "", true, false)
+		local n = #tokens
+		if n == 0 then
+			return {}
+		end
+		local n_ctx = opts.n_ctx or math.max(n, 64)
+		local ctx = self:context({
+			n_ctx = n_ctx,
+			n_batch = n,
+			embeddings = true,
+			pooling_type = opts.pooling_type or "mean",
+		})
+		local seq_id_one = ffi.new("int32_t[1]", 0)
+		local batch = llama.llama_batch_init(n, 0, 1)
+		for i = 0, n - 1 do
+			batch.token[i] = tokens[i + 1]
+			batch.pos[i] = i
+			batch.n_seq_id[i] = 1
+			batch.seq_id[i] = seq_id_one
+			batch.logits[i] = (i == n - 1) and 1 or 0
+		end
+		batch.n_tokens = n
+		local err = ctx:encode(batch)
+		llama.llama_batch_free(batch)
+		if err ~= 0 then
+			return {}
+		end
+		local emb = ctx:embeddings_seq(0)
+		if emb == nil then
+			return {}
+		end
+		local n_embd = self:n_embd()
+		local out = {}
+		for j = 0, n_embd - 1 do
+			out[j + 1] = emb[j]
+		end
+		return out
 	end
 
 	-- text (string), add_bos (bool, default true), parse_special (bool, default false).
@@ -364,7 +432,37 @@ return function(llama, lluama)
 		if opts.n_gpu_layers ~= nil then mparams.n_gpu_layers = opts.n_gpu_layers end
 		if opts.use_mmap ~= nil then mparams.use_mmap = opts.use_mmap end
 		if opts.use_mlock ~= nil then mparams.use_mlock = opts.use_mlock end
+		if opts.progress_callback and type(opts.progress_callback) == "function" then
+			progress_cb_ref = opts.progress_callback
+			mparams.progress_callback = progress_trampoline
+			mparams.progress_callback_user_data = nil
+		end
+		local kv_overrides_cdata = nil
+		if opts.kv_overrides and #opts.kv_overrides > 0 then
+			local n = #opts.kv_overrides
+			kv_overrides_cdata = ffi.new("struct llama_model_kv_override[?]", n + 1)
+			local tag_enum = { int = 0, float = 1, bool = 2, str = 3 }
+			for i = 0, n - 1 do
+				local o = opts.kv_overrides[i + 1]
+				local t = (o.type or "str"):lower()
+				kv_overrides_cdata[i].tag = tag_enum[t] or 3
+				ffi.copy(kv_overrides_cdata[i].key, (o.key or ""):sub(1, 127))
+				if t == "int" then
+					kv_overrides_cdata[i].val_i64 = tonumber(o.value) or 0
+				elseif t == "float" then
+					kv_overrides_cdata[i].val_f64 = tonumber(o.value) or 0
+				elseif t == "bool" then
+					kv_overrides_cdata[i].val_bool = o.value and o.value ~= false and o.value ~= 0
+				else
+					ffi.copy(kv_overrides_cdata[i].val_str, tostring(o.value or ""):sub(1, 127))
+				end
+			end
+			kv_overrides_cdata[n].tag = 3
+			kv_overrides_cdata[n].key[0] = 0
+			mparams.kv_overrides = kv_overrides_cdata
+		end
 		local model = load_model_from_file(path, mparams)
+		progress_cb_ref = nil
 		if model == nil then
 			error("lluama: failed to load model: " .. tostring(path))
 		end
@@ -381,7 +479,13 @@ return function(llama, lluama)
 		if opts.n_gpu_layers ~= nil then mparams.n_gpu_layers = opts.n_gpu_layers end
 		if opts.use_mmap ~= nil then mparams.use_mmap = opts.use_mmap end
 		if opts.use_mlock ~= nil then mparams.use_mlock = opts.use_mlock end
+		if opts.progress_callback and type(opts.progress_callback) == "function" then
+			progress_cb_ref = opts.progress_callback
+			mparams.progress_callback = progress_trampoline
+			mparams.progress_callback_user_data = nil
+		end
 		local model = llama.llama_model_load_from_splits(path_ptrs, n, mparams)
+		progress_cb_ref = nil
 		if model == nil then
 			error("lluama: failed to load model from splits")
 		end

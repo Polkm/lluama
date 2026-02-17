@@ -13,9 +13,8 @@ local backend = lluama.Backend()
 backend:init()
 
 local session = lluama.ChatSession(backend, model_path, {
-	template = "chatml",
 	system_prompt = "You are a helpful assistant. Answer concisely.",
-	temp = 0.0,
+	temp = 0.8,
 })
 
 print("Ready. Type a message and press Enter (empty to quit).")
