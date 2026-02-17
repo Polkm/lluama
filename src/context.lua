@@ -172,6 +172,35 @@ return function(llama)
 		assert_ctx(self)
 		return llama.llama_get_logits_ith(self.ctx, i)
 	end
+	-- Top-k token ids and probs from logits at position i (softmax). Works with client-side sampling.
+	function Context_mt.logits_top_k_ith(self, i, k)
+		assert_ctx(self)
+		k = k or 10
+		local logits = llama.llama_get_logits_ith(self.ctx, i)
+		if logits == nil then return {} end
+		local model = llama.llama_get_model(self.ctx)
+		if model == nil then return {} end
+		local n_vocab = llama.llama_vocab_n_tokens(llama.llama_model_get_vocab(model))
+		if n_vocab <= 0 then return {} end
+		local max_logit = -1e38
+		for j = 0, n_vocab - 1 do
+			if logits[j] > max_logit then max_logit = logits[j] end
+		end
+		local sum_exp = 0
+		for j = 0, n_vocab - 1 do
+			sum_exp = sum_exp + math.exp(logits[j] - max_logit)
+		end
+		if sum_exp <= 0 then return {} end
+		local list = {}
+		for j = 0, n_vocab - 1 do
+			local p = math.exp(logits[j] - max_logit) / sum_exp
+			list[#list + 1] = { id = j, p = p, logit = logits[j] }
+		end
+		table.sort(list, function(a, b) return a.p > b.p end)
+		local out = {}
+		for j = 1, math.min(k, #list) do out[j] = { id = list[j].id, p = list[j].p } end
+		return out
+	end
 	function Context_mt.embeddings(self)
 		assert_ctx(self)
 		return llama.llama_get_embeddings(self.ctx)

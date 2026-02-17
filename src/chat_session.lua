@@ -109,6 +109,9 @@ return function(lluama)
 		-- Grammar state was set in prompt() (we accepted the prefix); do not reset here.
 
 		for _ = 1, max_tokens do
+			if self._on_before_sample then
+				self._on_before_sample(self.ctx, logits_idx)
+			end
 			local next_token = self.sampler:sample(ctx, logits_idx)
 			if next_token == eos_id then break end
 			if self._stop_token_ids[next_token] then
@@ -226,6 +229,7 @@ return function(lluama)
 			_eos_id = eos_id,
 			_grammar = opts.grammar and true or nil,
 			_native_template_str = native_tmpl,
+			_on_before_sample = opts.on_before_sample,
 		}, ChatSession_mt)
 	end
 end
