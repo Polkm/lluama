@@ -38,18 +38,18 @@ The test loads the model path defined in the script, runs backend init, tokenize
 - `src/model.lua` — Model class (context, tokenize, __gc)
 - `src/context.lua` — Context class (decode_tokens, decode_one, logits, set_sampler, __gc)
 - `src/sampler.lua` — Sampler class (temp/dist/top_p chain, accept, sample, __gc)
-- `src/chat_session.lua` — ChatSession (prompt + generate with template; stop strings from model vocab)
+- `src/chat_session.lua` — ChatSession (prompt + generate with template; stops on EOG token via llama_vocab_is_eog, same as simple-chat)
 - `examples/chat.lua`, `examples/chat_demo.lua`, `examples/chat_grammar.lua`, `examples/chat_json.lua` — CLI chat examples (run from repo root)
 - `test/test_bindings.lua` — minimal test: load model, tokenize, one decode step
 - `test/unit/run.lua` — unit test runner; `test/unit/helper.lua` — shared scaffolding; `test/unit/*_spec.lua` — specs (no model required)
 
 ## Usage
 
-Require the library; all `llama_*` and `ggml_*` functions live on the returned table.
+Require the library; all `llama_`* and `ggml_*` functions live on the returned table.
 
 **Classes:** `Backend`, `Model`, `Context`, `Sampler`, `ChatSession`. Ownership: context holds model, model holds backend; attach a `Sampler` to a context for sampling. Use a given context from a single thread unless the llama.cpp library documents otherwise.
 
-**Simple chat (recommended):** use `ChatSession` so the library handles templates, decode positions, and stop logic.
+**Simple chat (recommended):** use `ChatSession` so the library handles templates, decode positions, and stop logic (generation stops on EOG token, same as llama.cpp simple-chat).
 
 ```lua
 local lluama = require("src.lluama")
@@ -94,7 +94,7 @@ local err = ctx:decode_tokens(token_ids, 0)  -- second arg: pos_start (for multi
 
 **LoRA:** `lluama.AdapterLora(model, path_lora)` then `ctx:set_adapter_lora(adapter[, scale])` / `ctx:rm_adapter_lora(adapter)` / `ctx:clear_adapter_lora()`. Adapters have no explicit free in the current API; keep them alive while in use.
 
-Raw cdata: use `model.model` and `ctx.ctx` for direct `lluama.llama.llama_*` / `lluama.ggml.ggml_*` calls.
+Raw cdata: use `model.model` and `ctx.ctx` for direct `lluama.llama.llama_`* / `lluama.ggml.ggml_*` calls.
 
 **Logging:** Logs are silent by default. To hook in: `lluama.set_log_callback(function(level, text) ... end)`. Pass `nil` to keep silent.
 

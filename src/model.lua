@@ -339,35 +339,6 @@ return function(llama, lluama)
 	function Model_mt.vocab_fim_rep(self) return llama.llama_vocab_fim_rep(self:vocab()) end
 	function Model_mt.vocab_fim_sep(self) return llama.llama_vocab_fim_sep(self:vocab()) end
 
-	-- Stop strings derived from vocab (for chat reply trimming). Returns array of strings from
-	-- special tokens (eos, eot, sep) and any token marked eog or control. Sorted by length
-	-- descending so longer sequences are matched first. Used by ChatSession instead of a template table.
-	function Model_mt.stop_strings_from_vocab(self)
-		assert_model(self)
-		local vocab = self:vocab()
-		local seen = {}
-		local function add(s)
-			if s and #s > 0 and not seen[s] then
-				seen[s] = true
-			end
-		end
-		for _, tid in ipairs({ self:eos(), self:eot(), self:sep() }) do
-			if tid and tid >= 0 then
-				add(self:vocab_get_text(tid))
-			end
-		end
-		local n = llama.llama_vocab_n_tokens(vocab)
-		for i = 0, n - 1 do
-			if llama.llama_vocab_is_eog(vocab, i) or llama.llama_vocab_is_control(vocab, i) then
-				add(self:vocab_get_text(i))
-			end
-		end
-		local out = {}
-		for s, _ in pairs(seen) do out[#out + 1] = s end
-		table.sort(out, function(a, b) return #a > #b end)
-		return out
-	end
-
 	-- Detokenize: token ids -> string. remove_special, unparse_special (default false).
 	function Model_mt.detokenize(self, token_ids, remove_special, unparse_special)
 		assert_model(self)
