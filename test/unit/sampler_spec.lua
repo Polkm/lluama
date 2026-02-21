@@ -1,7 +1,7 @@
 -- Unit tests for lluama.Sampler (no model required for basic tests; grammar tests need model)
 
-package.path = "./?.lua;" .. package.path
-local lluama = require("src.lluama")
+local helper = require("test.unit.helper")
+local lluama = helper.lluama
 
 assert(lluama.Sampler, "Sampler constructor exists")
 local s = lluama.Sampler({ temp = 0.5, seed = 42 })

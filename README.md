@@ -20,11 +20,11 @@ luajit test/test_bindings.lua
 
 The test loads the model path defined in the script, runs backend init, tokenizes "Hello", and performs one decode step.
 
-**CLI chat:** `luajit test/chat.lua [model_path]` — minimal back-and-forth chat (default model path as in test). Empty line to quit.
+**CLI chat:** `luajit examples/chat.lua [model_path]` — minimal back-and-forth chat (default model path as in test). Empty line to quit.
 
-**CLI chat (JSON):** `luajit test/chat_json.lua [model_path]` — same as above with `grammar = "json"` so output is constrained to valid JSON.
+**CLI chat (JSON):** `luajit examples/chat_json.lua [model_path]` — same as above with `grammar = "json"` so output is constrained to valid JSON.
 
-**Demo chat:** `luajit test/chat_demo.lua [--show-probs] [--context-length N] [model_path]` — progress bar on load, optional top-5 token probs after each reply, `/embed <text>` for one-shot embedding, `/probs` to toggle probs. Uses `progress_callback` and optional `kv_overrides` (e.g. context length).
+**Demo chat:** `luajit examples/chat_demo.lua [--show-probs] [--context-length N] [model_path]` — progress bar on load, optional top-5 token probs after each reply, `/embed <text>` for one-shot embedding, `/probs` to toggle probs. Uses `progress_callback` and optional `kv_overrides` (e.g. context length).
 
 **Unit tests** (no model or DLL required for most): `luajit test/unit/run.lua` — runs lluama, Sampler, and ChatSession specs.
 
@@ -39,8 +39,9 @@ The test loads the model path defined in the script, runs backend init, tokenize
 - `src/context.lua` — Context class (decode_tokens, decode_one, logits, set_sampler, __gc)
 - `src/sampler.lua` — Sampler class (temp/dist/top_p chain, accept, sample, __gc)
 - `src/chat_session.lua` — ChatSession (prompt + generate with template; stop strings from model vocab)
+- `examples/chat.lua`, `examples/chat_demo.lua`, `examples/chat_grammar.lua`, `examples/chat_json.lua` — CLI chat examples (run from repo root)
 - `test/test_bindings.lua` — minimal test: load model, tokenize, one decode step
-- `test/unit/run.lua` — unit test runner; `test/unit/*_spec.lua` — specs (no model required)
+- `test/unit/run.lua` — unit test runner; `test/unit/helper.lua` — shared scaffolding; `test/unit/*_spec.lua` — specs (no model required)
 
 ## Usage
 

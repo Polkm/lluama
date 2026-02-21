@@ -1,5 +1,5 @@
 -- CLI chat using the library's ChatSession. Run from repo root.
--- Usage: luajit test/chat.lua [model_path]
+-- Usage: luajit examples/chat.lua [model_path]
 -- Requires a GGUF model with a chat template (tokenizer.chat_template in metadata).
 -- If your model has no template, pass opts.template_string with the Jinja template.
 

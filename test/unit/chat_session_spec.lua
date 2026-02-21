@@ -2,17 +2,10 @@
 -- With model: verifies session has _grammar set and sampler chain includes grammar.
 -- Without model file: skips model-dependent tests.
 
-package.path = "./?.lua;" .. package.path
-local lluama = require("src.lluama")
-
-local function model_path_exists(path)
-	local f = io.open(path, "rb")
-	if f then f:close(); return true end
-	return false
-end
-
-local default_model = "models/Qwen2.5-Coder-1.5B-Instruct-Q3_K_S.gguf"
-local has_model = model_path_exists(default_model)
+local helper = require("test.unit.helper")
+local lluama = helper.lluama
+local default_model = helper.default_model_path
+local has_model = helper.model_path_exists(default_model)
 
 -- ChatSession with grammar: _grammar must be set and sampler must have a chain with grammar.
 -- Skip if model has no chat template (tokenizer.chat_template).

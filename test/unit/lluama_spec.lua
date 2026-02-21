@@ -1,7 +1,7 @@
 -- Unit tests for lluama module and class constructors (no model file required)
 
-package.path = "./?.lua;" .. package.path
-local lluama = require("src.lluama")
+local helper = require("test.unit.helper")
+local lluama = helper.lluama
 
 assert(lluama.llama, "lluama.llama")
 assert(lluama.ggml, "lluama.ggml")

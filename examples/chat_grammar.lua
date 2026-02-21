@@ -2,7 +2,7 @@
 -- Uses the chat template so the model sees normal context. The prompt must end with a newline
 -- so that prefix (.* "\n") is fully matched before we generate; then only "yes"|"no" is allowed.
 -- If the model always says "yes", that's model bias (not a bug); try higher temp or another seed.
--- Usage: luajit test/chat_grammar.lua [model_path]
+-- Run from repo root: luajit examples/chat_grammar.lua [model_path]
 
 package.path = "./?.lua;" .. package.path
 local lluama = require("src.lluama")

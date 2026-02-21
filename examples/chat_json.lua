@@ -1,6 +1,7 @@
 -- CLI chat with JSON grammar: forces model output to be valid JSON (object or array).
--- Usage: luajit test/chat_json.lua [model_path]
---        luajit test/chat_json.lua --no-grammar [model_path]  -- run without grammar (no constraint)
+-- Run from repo root:
+--   luajit examples/chat_json.lua [model_path]
+--   luajit examples/chat_json.lua --no-grammar [model_path]  -- run without grammar (no constraint)
 
 package.path = "./?.lua;" .. package.path
 local lluama = require("src.lluama")

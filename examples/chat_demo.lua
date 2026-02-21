@@ -1,8 +1,9 @@
 -- Demo chat: optional progress bar, top-k probs, /embed command, kv_overrides.
--- Usage: luajit test/chat_demo.lua [model_path]
---        luajit test/chat_demo.lua --show-probs [model_path]
---        luajit test/chat_demo.lua --progress [model_path]
---        luajit test/chat_demo.lua --context-length 8192 [model_path]
+-- Run from repo root:
+--   luajit examples/chat_demo.lua [model_path]
+--   luajit examples/chat_demo.lua --show-probs [model_path]
+--   luajit examples/chat_demo.lua --progress [model_path]
+--   luajit examples/chat_demo.lua --context-length 8192 [model_path]
 --
 -- Commands: /embed <text> | /probs | empty to quit
 
